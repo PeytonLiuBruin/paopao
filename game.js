@@ -23,8 +23,12 @@
   const bubbleSpriteCols = 5;
 
   const palette = [
-    { name: "湖雾蓝", color: "#8ebfcb", deep: "#5f91a0", light: "#d5e9ee" },
-    { name: "雾玫粉", color: "#d9a2b2", deep: "#a87584", light: "#f1d4dc" },
+    { name: "湖雾蓝", color: "#6eafc0", deep: "#3f7f91", light: "#cbe8ef" },
+    { name: "雾玫粉", color: "#d8899d", deep: "#a05f73", light: "#f0c7d3" },
+  ];
+  const backgroundPalette = [
+    { color: "#c5dde3", deep: "#9bc4cd", light: "#e8f4f6" },
+    { color: "#e8c8d1", deep: "#d2a6b4", light: "#f8e5eb" },
   ];
 
   const openTone = makeOpenTone();
@@ -32,8 +36,7 @@
   const whiteTone = makeWhiteTone();
   const bombTone = makeBombTone();
   const boundaryTone = "#c9b7d7";
-  const waterDrainStart = 2.15;
-  const waterDrainPeak = 11.4;
+  const waterPressureCap = 132;
   const comboBaseWindow = 2350;
   const comboMinWindow = 1450;
   const decolorDuration = 4200;
@@ -51,6 +54,7 @@
     score: 0,
     poppedCount: 0,
     water: 76,
+    waterPressure: 0,
     combo: 0,
     bestCombo: 0,
     comboPulse: 0,
@@ -128,13 +132,21 @@
     return t * t * (3 - 2 * t);
   }
 
+  function backgroundMotionTime(time = state.visualTime) {
+    const d = difficulty();
+    const highDifficulty = smoothstep(0.45, 1, d);
+    const lateFlow = smoothstep(72, 168, state.elapsed / 1000);
+    return time * (1 + highDifficulty * 0.34 + lateFlow * 0.34);
+  }
+
   function backgroundBoundaryForY(y, time = state.visualTime) {
+    const flowTime = backgroundMotionTime(time);
     const ny = state.height > 0 ? y / state.height : 0.5;
     return (
       0.5 +
-      Math.sin(time / 22000) * 0.1 +
-      Math.sin(ny * Math.PI * 1.55 + time / 15000) * 0.11 +
-      Math.sin(ny * Math.PI * 3.2 - time / 26000) * 0.035
+      Math.sin(flowTime / 21000) * 0.1 +
+      Math.sin(ny * Math.PI * 1.55 + flowTime / 14200) * 0.11 +
+      Math.sin(ny * Math.PI * 3.2 - flowTime / 24200) * 0.035
     );
   }
 
@@ -160,12 +172,13 @@
   function rotatedBackgroundPoint(nx, ny, time = state.visualTime) {
     const stage = backgroundFlowStage();
     if (stage <= 0) return { x: nx, y: ny };
+    const flowTime = backgroundMotionTime(time);
     const cx = nx - 0.5;
     const cy = ny - 0.5;
     const seconds = state.elapsed / 1000;
     const highFlow = highFlowAmount();
-    const slowRotation = (time / (210000 - stage * 14000)) * (0.45 + stage * 0.07);
-    const fullTurn = highFlow * Math.max(0, seconds - 66) * ((Math.PI * 2) / 230);
+    const slowRotation = (flowTime / (184000 - stage * 12000)) * (0.45 + stage * 0.08);
+    const fullTurn = highFlow * Math.max(0, seconds - 66) * ((Math.PI * 2) / 188);
     const angle = slowRotation + fullTurn;
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
@@ -176,6 +189,7 @@
   }
 
   function backgroundMixAt(x, y, time = state.visualTime) {
+    const flowTime = backgroundMotionTime(time);
     const nx = state.width > 0 ? x / state.width : 0.5;
     const ny = state.height > 0 ? y / state.height : 0.5;
     const stage = backgroundFlowStage();
@@ -191,32 +205,32 @@
     const highFlow = highFlowAmount();
     const radius = Math.hypot(cx, cy);
     const angle = Math.atan2(cy, cx);
-    const diagonal = wave * (fy - 0.5) * (0.2 + Math.sin(time / 36000) * 0.055);
-    const primaryFlow = smoothstep(0.16, 0.76, d) * Math.sin((fx * 0.72 + fy * 0.52) * Math.PI * 2 + time / 28000) * 0.12;
-    const secondaryFlow = smoothstep(0.42, 1, d) * Math.sin((fx * 1.05 - fy * 0.58) * Math.PI * 2 - time / 42000) * 0.055;
-    const broadSwell = wave * Math.sin((fx * 0.36 + fy * 0.92) * Math.PI * 2 - time / 48000) * 0.06;
+    const diagonal = wave * (fy - 0.5) * (0.14 + Math.sin(flowTime / 39000) * 0.032);
+    const primaryFlow = smoothstep(0.16, 0.76, d) * Math.sin((fx * 0.66 + fy * 0.5) * Math.PI * 2 + flowTime / 30000) * 0.078;
+    const secondaryFlow = smoothstep(0.42, 1, d) * Math.sin((fx * 0.95 - fy * 0.54) * Math.PI * 2 - flowTime / 45500) * 0.034;
+    const broadSwell = wave * Math.sin((fx * 0.32 + fy * 0.84) * Math.PI * 2 - flowTime / 52000) * 0.04;
     const rotationalRibbon =
       stage > 0
-        ? Math.sin((fx * (0.62 + stage * 0.05) - fy * 0.42) * Math.PI * 2 + time / (62000 + stage * 9000)) *
-          (0.018 + stageMix * 0.038)
+        ? Math.sin((fx * (0.62 + stage * 0.05) - fy * 0.42) * Math.PI * 2 + flowTime / (52000 + stage * 7600)) *
+          (0.012 + stageMix * 0.026)
         : 0;
     const slowCurl =
       stage > 1
-        ? Math.sin((Math.hypot(cx, cy) * (1.08 + stage * 0.12) + fx * 0.18 - fy * 0.16) * Math.PI * 2 - time / 92000) *
-          (0.012 + stageMix * 0.026)
+        ? Math.sin((Math.hypot(cx, cy) * (1.08 + stage * 0.12) + fx * 0.18 - fy * 0.16) * Math.PI * 2 - flowTime / 76000) *
+          (0.008 + stageMix * 0.017)
         : 0;
     const orbitSwell =
       highFlow *
-      Math.sin(angle + radius * Math.PI * 2.35 - time / 112000) *
-      (0.012 + stageMix * 0.018);
+      Math.sin(angle + radius * Math.PI * 2.35 - flowTime / 86000) *
+      (0.008 + stageMix * 0.012);
     const wideCurrent =
       highFlow *
-      Math.sin((fx * 0.3 + fy * 0.72) * Math.PI * 2 + Math.sin(time / 98000) * 0.86) *
-      (0.016 + stageMix * 0.015);
+      Math.sin((fx * 0.3 + fy * 0.72) * Math.PI * 2 + Math.sin(flowTime / 78000) * 0.86) *
+      (0.01 + stageMix * 0.01);
     const counterCurrent =
       smoothstep(2.15, 3.7, stage) *
-      Math.sin((fx * 0.74 - fy * 0.2 + radius * 0.14) * Math.PI * 2 - time / 156000) *
-      0.018;
+      Math.sin((fx * 0.74 - fy * 0.2 + radius * 0.14) * Math.PI * 2 - flowTime / 124000) *
+      0.012;
     const field =
       fx +
       diagonal +
@@ -229,11 +243,11 @@
       wideCurrent +
       counterCurrent;
     const softness =
-      0.23 +
-      smoothstep(0.25, 1, d) * 0.035 +
-      stageMix * 0.018 +
-      highFlow * 0.018 +
-      Math.sin(time / 32000) * 0.012;
+      0.28 +
+      smoothstep(0.25, 1, d) * 0.026 +
+      stageMix * 0.012 +
+      highFlow * 0.01 +
+      Math.sin(flowTime / 42000) * 0.006;
     return smoothstep(boundary - softness, boundary + softness, field);
   }
 
@@ -334,7 +348,7 @@
   }
 
   function comboWaterBonus() {
-    return Math.min(7, Math.floor(Math.max(0, state.combo - 1) / 4));
+    return Math.min(5, Math.floor(Math.max(0, state.combo - 1) / 5));
   }
 
   function comboScoreBonus() {
@@ -343,6 +357,17 @@
 
   function comboWindow() {
     return Math.max(comboMinWindow, comboBaseWindow - Math.min(620, state.combo * 22));
+  }
+
+  function comboRank() {
+    if (state.combo >= 32) return "SSS";
+    if (state.combo >= 24) return "SS";
+    if (state.combo >= 17) return "S";
+    if (state.combo >= 11) return "A";
+    if (state.combo >= 7) return "B";
+    if (state.combo >= 4) return "C";
+    if (state.combo >= 2) return "D";
+    return "";
   }
 
   function formatTime(ms) {
@@ -387,7 +412,7 @@
     state.comboPulse = 1;
     state.comboUntil = state.elapsed + comboWindow();
     if (chargeSkill && state.combo > 1) {
-      chargeClearSkill(0.022 + Math.min(0.028, state.combo * 0.0032));
+      chargeClearSkill(0.012 + Math.min(0.018, state.combo * 0.002));
     }
   }
 
@@ -441,15 +466,21 @@
     waterBlock.classList.toggle("low", water <= 28);
     waterBlock.classList.toggle("pulse", state.comboPulse > 0.16);
     waterBlock.classList.toggle("open", openActive);
+    waterBlock.classList.toggle("combo-hot", state.combo >= 5);
     comboChip.style.setProperty("--combo-left", comboProgress().toFixed(3));
+    const rank = comboRank();
+    comboChip.dataset.rank = rank;
     comboChip.classList.toggle("active", state.combo > 1);
+    comboChip.classList.toggle("ranked", Boolean(rank));
     comboChip.classList.toggle("expiring", state.combo > 1 && comboProgress() < 0.32);
+    comboChip.classList.toggle("surge", state.combo >= 4 && state.comboPulse > 0.14);
+    comboChip.classList.toggle("milestone", state.combo >= 5 && state.combo % 5 === 0 && state.comboPulse > 0.2);
     comboChip.textContent = openActive
       ? state.combo > 1
-        ? `续水 x${state.combo}`
+        ? `x${state.combo}`
         : "续水"
       : state.combo > 1
-        ? `连击 x${state.combo}`
+        ? `x${state.combo}`
         : "";
     scoreEl.textContent = String(state.score);
     timeEl.textContent = formatTime(state.elapsed);
@@ -471,6 +502,7 @@
     state.score = 0;
     state.poppedCount = 0;
     state.water = 76;
+    state.waterPressure = 0;
     resetCombo();
     state.bestCombo = 0;
     state.clearSkillCharge = 1;
@@ -482,7 +514,7 @@
     state.edgeCursor = Math.floor(rand(0, edgeCycle.length));
     state.nextPowerAt = 9500;
     state.nextStreamAt = 40000;
-    state.nextSpawnAt = 240;
+    state.nextSpawnAt = 120;
     state.openUntil = 0;
     state.flash = 0;
     state.bubbles = [];
@@ -532,9 +564,9 @@
 
   function difficulty() {
     const seconds = state.elapsed / 1000;
-    const timePart = smoothstep(8, 128, seconds);
-    const scorePart = smoothstep(24, 280, state.score);
-    return clamp(timePart * 0.9 + scorePart * 0.28, 0, 1);
+    const timePart = smoothstep(4, 96, seconds);
+    const scorePart = smoothstep(12, 220, state.score);
+    return clamp(timePart * 0.94 + scorePart * 0.32, 0, 1);
   }
 
   function difficultyTier(value) {
@@ -547,13 +579,70 @@
     state.flash = Math.max(state.flash, 0.3);
   }
 
-  function waterDrainRate() {
+  function requiredCorrectRate() {
     const seconds = state.elapsed / 1000;
-    const warmup = smoothstep(4, 32, seconds);
-    const climb = smoothstep(30, 132, seconds);
-    const latePush = smoothstep(112, 230, seconds);
-    const scorePressure = smoothstep(45, 230, state.score) * 1.35;
-    return Math.min(waterDrainPeak, waterDrainStart + warmup * 2.25 + climb * 4.05 + latePush * 3.35 + scorePressure);
+    return clamp(
+      0.46 +
+        smoothstep(60, 104, seconds) * 0.1 +
+        smoothstep(104, 172, seconds) * 0.08 +
+        smoothstep(172, 260, seconds) * 0.08,
+      0.46,
+      0.72,
+    );
+  }
+
+  function baseWaterDrainRate() {
+    const seconds = state.elapsed / 1000;
+    return (
+      0.18 +
+      smoothstep(12, 42, seconds) * 0.12 +
+      smoothstep(60, 150, seconds) * 0.34 +
+      smoothstep(150, 280, seconds) * 0.38
+    );
+  }
+
+  function waterPressureHorizon() {
+    return 7.4 - smoothstep(60, 180, state.elapsed / 1000) * 1.35;
+  }
+
+  function waterDrainRate() {
+    const pressureRate = state.waterPressure / waterPressureHorizon();
+    return baseWaterDrainRate() + pressureRate * requiredCorrectRate();
+  }
+
+  function drainWater(dt) {
+    const pressureRate = state.waterPressure / waterPressureHorizon();
+    state.waterPressure = Math.max(0, state.waterPressure - pressureRate * dt);
+    state.water -= (baseWaterDrainRate() + pressureRate * requiredCorrectRate()) * dt;
+  }
+
+  function formatWaterGain(value) {
+    const rounded = Math.round(value * 10) / 10;
+    return Math.abs(rounded - Math.round(rounded)) < 0.05 ? String(Math.round(rounded)) : rounded.toFixed(1);
+  }
+
+  function addWater(amount, options = {}) {
+    const softCap = options.softCap !== false;
+    const highWater = softCap ? smoothstep(70, 96, state.water) : 0;
+    const lowHelp = softCap ? smoothstep(34, 10, state.water) * 0.08 : 0;
+    const highDifficulty = smoothstep(3, 5, displayDifficultyLevel());
+    const multiplier = clamp(1 + lowHelp - highWater * (0.34 + highDifficulty * 0.1), 0.5, 1.08);
+    const applied = amount * multiplier;
+    state.water = Math.min(100, state.water + applied);
+    return applied;
+  }
+
+  function waterOpportunityValue(bubble) {
+    if (bubble.isClear) return 8;
+    if (bubble.isBleach) return 5.4;
+    if (bubble.isBomb) return 4.2;
+    if (bubble.isWhite) return bubble.baseRadius <= 27 || bubble.isStream ? 1.4 : 2.2;
+    if (bubble.isStream) return 2.8;
+    return bubble.baseRadius <= 27 ? 3.7 : 5.35;
+  }
+
+  function noteWaterOpportunity(bubble) {
+    state.waterPressure = Math.min(waterPressureCap, state.waterPressure + waterOpportunityValue(bubble));
   }
 
   function bubbleRadiusRange(d, kind = "normal") {
@@ -644,7 +733,7 @@
             y: rand(state.height * 0.24, state.height * 0.72),
           });
     const velocity = options.velocity ?? aimedVelocity(x, y, target, speed, kind === "normal" ? 12 : 26);
-    state.bubbles.push({
+    const bubble = {
       x,
       y,
       vx: velocity.vx,
@@ -679,7 +768,9 @@
       wasReady: false,
       spin: rand(-1.6, 1.6),
       edge,
-    });
+    };
+    state.bubbles.push(bubble);
+    noteWaterOpportunity(bubble);
 
     const hintColor = isBomb
       ? bombTone.light
@@ -727,9 +818,19 @@
     const sameColorStream = streamLevel < 5;
     const streamColorIndex = sameColorStream ? pickBalancedColorIndex() : null;
     const pattern = sameColorStream ? "spray" : d > 0.38 && Math.random() < 0.46 + d * 0.2 ? "zigzag" : "spray";
-    const count = Math.round(rand(15 + d * 4, 22 + d * 6));
+    const count =
+      streamLevel <= 3
+        ? Math.round(rand(10, 14))
+        : streamLevel === 4
+          ? Math.round(rand(13 + d * 2, 18 + d * 3))
+          : Math.round(rand(16 + d * 2, 22 + d * 3));
     const radius = radiusForDifficulty(d, "stream");
-    const cadence = sameColorStream ? rand(0.044, 0.06) : rand(0.052, 0.078);
+    const cadence =
+      streamLevel <= 3
+        ? rand(0.078, 0.105)
+        : sameColorStream
+          ? rand(0.058, 0.078)
+          : rand(0.064, 0.09);
     const laneGap = radius * rand(1.55, 1.85);
     const anchor =
       edge === "left" || edge === "right"
@@ -782,9 +883,9 @@
     }
   }
 
-  function spawnBubbleCluster(d) {
+  function spawnBubbleCluster(d, maxCount = 4) {
     const edge = pickSpawnEdge();
-    const count = Math.round(rand(2, 3 + d * 2));
+    const count = Math.min(maxCount, Math.round(rand(2, 3 + d * 2)));
     const radius = radiusForDifficulty(d, "cluster");
     const spacing = radius * rand(0.72, 1.04);
     const anchor =
@@ -813,9 +914,9 @@
     }
   }
 
-  function spawnBubbleFan(d) {
+  function spawnBubbleFan(d, maxCount = 4) {
     const edge = pickSpawnEdge();
-    const count = Math.round(rand(3, 4 + d * 2));
+    const count = Math.min(maxCount, Math.round(rand(3, 4 + d * 2)));
     const radius = radiusForDifficulty(d, "fan");
     const anchor =
       edge === "left" || edge === "right"
@@ -853,35 +954,39 @@
 
   function spawnWave() {
     const d = difficulty();
-    const baseInterval = Math.max(600, 1500 - d * 610 - Math.min(120, state.score * 1.15));
-    state.nextSpawnAt = state.elapsed + baseInterval * rand(0.86, 1.24);
+    const level = displayDifficultyLevel();
+    const maxWaveCount = level <= 2 ? 1 : level === 3 ? 2 : level === 4 ? 3 : 4;
+    const baseInterval = Math.max(480, 1180 - d * 620 - Math.min(150, state.score * 1.35));
+    state.nextSpawnAt = state.elapsed + baseInterval * rand(0.78, 1.08);
 
-    if (displayDifficultyLevel() >= 3 && state.elapsed >= state.nextStreamAt && state.bubbles.length <= 15) {
+    if (state.elapsed >= state.nextPowerAt && state.bubbles.length >= 2 && state.bubbles.length <= 18) {
+      spawnBubble(false, Math.random() < 0.52 ? "bomb" : "bleach");
+      state.nextPowerAt = state.elapsed + rand(11500 - d * 2400, 19000 - d * 3400);
+      return;
+    }
+
+    if (level >= 3 && state.elapsed >= state.nextStreamAt && state.bubbles.length <= (level === 3 ? 10 : 15)) {
       spawnBubbleStream(d);
       state.nextStreamAt = state.elapsed + rand(13000 - d * 3800, 21000 - d * 5600);
       return;
     }
 
-    if (state.bubbles.length <= 13) {
+    if (level >= 3 && state.bubbles.length <= 13) {
       const varietyRoll = Math.random();
-      if (d > 0.14 && varietyRoll < 0.18 + d * 0.12) {
-        spawnBubbleCluster(d);
+      if (d > 0.2 && varietyRoll < (level === 3 ? 0.1 + d * 0.08 : 0.16 + d * 0.1)) {
+        spawnBubbleCluster(d, maxWaveCount);
         return;
       }
-      if (d > 0.32 && varietyRoll < 0.3 + d * 0.1) {
-        spawnBubbleFan(d);
+      if (level >= 4 && d > 0.4 && varietyRoll < 0.24 + d * 0.08) {
+        spawnBubbleFan(d, maxWaveCount);
         return;
       }
     }
 
     let count = 1;
-    if (d > 0.62 && Math.random() < (d - 0.5) * 0.36) count += Math.floor(rand(2, 4 + d * 2.4));
-    if (d > 0.86 && Math.random() < 0.18) count += Math.floor(rand(2, 4));
-
-    if (state.elapsed >= state.nextPowerAt && state.bubbles.length >= 2 && state.bubbles.length <= 18) {
-      spawnBubble(false, Math.random() < 0.52 ? "bomb" : "bleach");
-      state.nextPowerAt = state.elapsed + rand(11000 - d * 2800, 18000 - d * 3800);
-    }
+    if (level >= 4 && d > 0.62 && Math.random() < (d - 0.5) * 0.28) count += Math.floor(rand(1, 3 + d * 1.5));
+    if (level >= 5 && d > 0.86 && Math.random() < 0.12) count += Math.floor(rand(1, 3));
+    count = Math.min(maxWaveCount, count);
 
     const normalAnchorIndex = count > 1 ? Math.floor(rand(0, count)) : -1;
     for (let index = 0; index < count; index += 1) {
@@ -921,10 +1026,25 @@
     }
     state.poppedCount += cleared.length;
     state.score += cleared.length;
-    state.water = Math.min(100, state.water + Math.min(28, 10 + cleared.length * 2 + comboWaterBonus()));
+    addWater(Math.min(24, 8 + cleared.length * 1.55 + comboWaterBonus()));
     state.nextSpawnAt = Math.min(state.nextSpawnAt, state.elapsed + rand(240, 520));
-    state.flash = Math.max(state.flash, 0.64);
-    state.ripples.push({ x: origin.x, y: origin.y, radius: origin.radius, age: 0, life: 0.82, color: clearTone.color, power: 1.2 });
+    state.flash = Math.max(state.flash, 0.82);
+    state.blasts.push({
+      x: origin.x,
+      y: origin.y,
+      radius: 16,
+      maxRadius: Math.max(state.width, state.height) * 1.08,
+      speed: 920,
+      age: 0,
+      life: 0.96,
+      color: clearTone.light,
+      accentColor: palette[0].light,
+      fillAlpha: 0.26,
+      decorative: true,
+      rings: 3,
+    });
+    state.ripples.push({ x: origin.x, y: origin.y, radius: origin.radius * 1.15, age: 0, life: 0.82, color: clearTone.color, power: 1.55 });
+    state.ripples.push({ x: state.width * 0.5, y: state.height * 0.5, radius: Math.min(state.width, state.height) * 0.22, age: 0, life: 0.56, color: clearTone.light, power: 1.15 });
 
     cleared.forEach((bubble, index) => {
       const color = bubble.colorIndex >= 0 ? palette[bubble.colorIndex] : openTone;
@@ -952,8 +1072,9 @@
       }
     });
 
-    for (let i = 0; i < 42; i += 1) {
-      makeParticle(origin.x, origin.y, clearTone.color, rand(130, 330), rand(0, Math.PI * 2), rand(0.42, 0.92), i % 3 === 0);
+    makeFloatText(origin.x + 18, origin.y - 42, `CLEAR x${Math.max(1, cleared.length)}`, clearTone.light, 1.34);
+    for (let i = 0; i < 64; i += 1) {
+      makeParticle(origin.x, origin.y, i % 2 === 0 ? clearTone.color : palette[i % 4 === 0 ? 0 : 1].light, rand(160, 420), rand(0, Math.PI * 2), rand(0.42, 0.98), i % 3 === 0);
     }
   }
 
@@ -1045,16 +1166,21 @@
     state.blasts.push({
       x: origin.x,
       y: origin.y,
-      radius: 10,
-      maxRadius: Math.max(state.width, state.height) * 0.78,
-      speed: 520,
+      radius: 14,
+      maxRadius: Math.max(state.width, state.height) * 0.86,
+      speed: 620,
       age: 0,
-      life: 1.15,
+      life: 1.18,
+      color: bombTone.light,
+      accentColor: "#ffffff",
+      fillAlpha: 0.22,
+      rings: 3,
     });
-    state.flash = Math.max(state.flash, 0.18);
-    state.ripples.push({ x: origin.x, y: origin.y, radius: 18, age: 0, life: 0.48, color: bombTone.light, power: 1.1 });
-    for (let i = 0; i < 26; i += 1) {
-      makeParticle(origin.x, origin.y, i % 2 === 0 ? bombTone.light : whiteTone.light, rand(90, 260), rand(0, Math.PI * 2), rand(0.28, 0.62), i % 6 === 0);
+    state.flash = Math.max(state.flash, 0.3);
+    state.ripples.push({ x: origin.x, y: origin.y, radius: 22, age: 0, life: 0.56, color: bombTone.light, power: 1.45 });
+    state.ripples.push({ x: origin.x, y: origin.y, radius: 38, age: 0, life: 0.42, color: "#ffffff", power: 0.85 });
+    for (let i = 0; i < 42; i += 1) {
+      makeParticle(origin.x, origin.y, i % 2 === 0 ? bombTone.light : whiteTone.light, rand(120, 340), rand(0, Math.PI * 2), rand(0.3, 0.72), i % 5 === 0);
     }
   }
 
@@ -1078,7 +1204,7 @@
     state.poppedCount += 1;
     registerCombo({ chargeSkill: false });
     state.score += bubble.isWhite ? 1 : 1;
-    state.water = Math.min(100, state.water + (bubble.isWhite ? 1.5 : 2));
+    addWater(bubble.isWhite ? 1.3 : 1.8);
     state.ripples.push({
       x: bubble.x,
       y: bubble.y,
@@ -1120,6 +1246,55 @@
       life: 0.78,
       vy: -34,
     });
+  }
+
+  function comboFeedbackAt(x, y, color) {
+    if (state.combo < 3) return;
+    const milestone = state.combo >= 5 && state.combo % 5 === 0;
+    const mega = state.combo >= 10 && state.combo % 10 === 0;
+    const strong = state.combo >= 8;
+    const power = mega ? 1.26 : milestone ? 0.98 : strong ? 0.72 : 0.5;
+    state.ripples.push({
+      x,
+      y,
+      radius: mega ? 30 : milestone ? 22 : 14,
+      age: 0,
+      life: mega ? 0.42 : milestone ? 0.34 : 0.24,
+      color: color.light,
+      power,
+    });
+    if (strong) {
+      state.ripples.push({
+        x,
+        y,
+        radius: mega ? 14 : 10,
+        age: 0,
+        life: 0.22,
+        color: "#ffffff",
+        power: mega ? 0.72 : 0.42,
+      });
+    }
+    if (milestone) {
+      const rank = comboRank() || "B";
+      const text = `${rank} x${state.combo}!`;
+      makeFloatText(x, y - 30, text, color.light, Math.min(1.86, 1.24 + state.combo * 0.02));
+      state.flash = Math.max(state.flash, mega ? 0.2 : 0.14);
+    } else if (state.combo === 3) {
+      makeFloatText(x, y - 22, `${comboRank()} x${state.combo}`, color.light, 1.12);
+    } else if (state.combo >= 7 && state.combo % 3 === 1) {
+      const rank = comboRank();
+      makeFloatText(x, y - 22, rank ? `${rank} x${state.combo}` : `x${state.combo}`, color.light, Math.min(1.42, 1.08 + state.combo * 0.014));
+    }
+  }
+
+  function vibratePop(base = 12) {
+    if (!navigator.vibrate) return;
+    if (state.combo >= 10 && state.combo % 5 === 0) {
+      navigator.vibrate([10, 18, 12]);
+      return;
+    }
+    const duration = Math.round(base + Math.min(14, Math.max(0, state.combo - 2) * 1.35));
+    navigator.vibrate(duration);
   }
 
   function makePunctureSplash(bubble, hitX, hitY, color, amount, isSmall, isSuper) {
@@ -1173,9 +1348,8 @@
     if (bubble.isClear) {
       makeFloatText(bubble.x, bubble.y - bubble.radius, `x${state.combo} 清屏`, clearTone.light, 1.08);
       activateClearScreen(bubble);
-      if (navigator.vibrate) {
-        navigator.vibrate(34);
-      }
+      comboFeedbackAt(bubble.x, bubble.y, clearTone);
+      vibratePop(24);
       playPop("clear");
       updateHud();
       return;
@@ -1183,11 +1357,10 @@
 
     if (bubble.isBleach) {
       state.score += 1;
-      state.water = Math.min(100, state.water + 6);
+      addWater(5.4);
       decolorBubbles(bubble);
-      if (navigator.vibrate) {
-        navigator.vibrate(18);
-      }
+      comboFeedbackAt(bubble.x, bubble.y, whiteTone);
+      vibratePop(16);
       playPop("clear");
       updateHud();
       return;
@@ -1195,12 +1368,11 @@
 
     if (bubble.isBomb) {
       state.score += 1;
-      state.water = Math.min(100, state.water + 4);
+      addWater(3.8);
       makeFloatText(bubble.x, bubble.y - bubble.radius, "扩散", bombTone.light, 1.08);
       startBombBlast(bubble);
-      if (navigator.vibrate) {
-        navigator.vibrate(24);
-      }
+      comboFeedbackAt(bubble.x, bubble.y, bombTone);
+      vibratePop(20);
       playPop("super");
       updateHud();
       return;
@@ -1228,26 +1400,25 @@
         : 1 + comboScoreBonus();
 
     state.score += scoreGain;
-    state.water = Math.min(100, state.water + waterGain);
+    const appliedWaterGain = addWater(waterGain);
     state.flash = Math.max(state.flash, bubble.isSuper ? 0.46 : isSmall ? 0.16 : 0.28);
     makeFloatText(
       bubble.x,
       bubble.y - bubble.radius * 0.72,
-      bubble.isWhite ? "+1分" : state.combo > 1 ? `x${state.combo} +${waterGain}` : `+${waterGain}`,
+      bubble.isWhite ? "+1分" : state.combo > 1 ? `x${state.combo} +${formatWaterGain(appliedWaterGain)}` : `+${formatWaterGain(appliedWaterGain)}`,
       isOpen ? openTone.light : color.light,
       Math.min(1.34, 0.96 + state.combo * 0.012),
     );
 
     const amount = bubble.isSuper ? 46 : isSmall ? 9 + Math.round(bubble.radius * 0.16) : Math.round(16 + bubble.radius * 0.55);
     makePunctureSplash(bubble, hitX, hitY, color, amount, isSmall, bubble.isSuper);
+    comboFeedbackAt(bubble.x, bubble.y, color);
 
     if (bubble.isSuper) {
       activateOpenMode(bubble.x, bubble.y);
     }
 
-    if (navigator.vibrate) {
-      navigator.vibrate(bubble.isSuper ? 28 : isSmall ? 7 : 15);
-    }
+    vibratePop(bubble.isSuper ? 24 : isSmall ? 7 : 14);
     playPop(bubble.isSuper ? "super" : isSmall ? "small" : "large");
   }
 
@@ -1470,7 +1641,7 @@
     if (tier > state.difficultyTier) {
       triggerDifficultyUp(tier);
     }
-    state.water -= waterDrainRate() * dt;
+    drainWater(dt);
     state.flash = Math.max(0, state.flash - dt * 1.9);
     state.difficultyFlash = Math.max(0, state.difficultyFlash - dt * 0.9);
     state.comboPulse = Math.max(0, state.comboPulse - dt * 2.6);
@@ -1542,16 +1713,18 @@
       blast.age += dt;
       blast.radius += blast.speed * dt;
 
-      for (let j = state.bubbles.length - 1; j >= 0; j -= 1) {
-        const bubble = state.bubbles[j];
-        if (bubble.age < 0) {
-          continue;
-        }
-        const dx = bubble.x - blast.x;
-        const dy = bubble.y - blast.y;
-        const hitRadius = blast.radius + bubble.radius * 0.45;
-        if (dx * dx + dy * dy <= hitRadius * hitRadius) {
-          burstBubbleByBlast(bubble, j);
+      if (!blast.decorative) {
+        for (let j = state.bubbles.length - 1; j >= 0; j -= 1) {
+          const bubble = state.bubbles[j];
+          if (bubble.age < 0) {
+            continue;
+          }
+          const dx = bubble.x - blast.x;
+          const dy = bubble.y - blast.y;
+          const hitRadius = blast.radius + bubble.radius * 0.45;
+          if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+            burstBubbleByBlast(bubble, j);
+          }
         }
       }
 
@@ -1609,13 +1782,14 @@
   }
 
   function backgroundBoundaryGuideX(y, time) {
+    const flowTime = backgroundMotionTime(time);
     const baseX = backgroundBoundaryForY(y, time) * state.width;
     const ny = state.height > 0 ? y / state.height : 0.5;
     const stage = backgroundFlowStage();
     const highFlow = highFlowAmount();
     const slowOffset =
-      Math.sin(ny * Math.PI * 1.35 + time / 118000) * state.width * 0.018 * highFlow +
-      Math.sin(ny * Math.PI * 2.1 - time / 146000) * state.width * 0.012 * smoothstep(2, 4, stage);
+      Math.sin(ny * Math.PI * 1.35 + flowTime / 94000) * state.width * 0.018 * highFlow +
+      Math.sin(ny * Math.PI * 2.1 - flowTime / 116000) * state.width * 0.012 * smoothstep(2, 4, stage);
     return clamp(baseX + slowOffset, state.width * 0.08, state.width * 0.92);
   }
 
@@ -1679,20 +1853,21 @@
         ctx.lineTo(x, y);
       }
     }
-    ctx.shadowColor = colorWithAlpha(boundaryTone, 0.1);
-    ctx.shadowBlur = 7 + d * 3;
-    ctx.strokeStyle = colorWithAlpha(boundaryTone, 0.075 + d * 0.02 - highFlow * 0.018);
-    ctx.lineWidth = 4.2 + d * 1.1;
+    ctx.shadowColor = colorWithAlpha(boundaryTone, 0.22);
+    ctx.shadowBlur = 9 + d * 5;
+    ctx.strokeStyle = colorWithAlpha(boundaryTone, 0.14 + d * 0.038 + highFlow * 0.016);
+    ctx.lineWidth = 5.2 + d * 1.5;
     ctx.stroke();
     ctx.shadowBlur = 0;
-    ctx.strokeStyle = colorWithAlpha("#ffffff", 0.045);
-    ctx.lineWidth = 0.9;
+    ctx.strokeStyle = colorWithAlpha("#ffffff", 0.072 + d * 0.014);
+    ctx.lineWidth = 1.15;
     ctx.stroke();
     ctx.restore();
   }
 
   function drawBackground() {
     const time = state.visualTime;
+    const flowTime = backgroundMotionTime(time);
     const d = difficulty();
     const openAmount = state.openUntil > state.elapsed ? 0.16 : 0;
     const rowHeight = 3;
@@ -1702,14 +1877,14 @@
       const bandY = y + rowHeight * 0.5;
       const vertical = state.height > 0 ? bandY / state.height : 0.5;
       const colorA = mixHex(
-        mixHex(palette[0].light, palette[0].deep, 0.16 + vertical * 0.34),
+        mixHex(backgroundPalette[0].light, backgroundPalette[0].deep, 0.09 + vertical * 0.2),
         openTone.light,
-        openAmount * 0.18,
+        openAmount * 0.12,
       );
       const colorB = mixHex(
-        mixHex(palette[1].light, palette[1].deep, 0.15 + vertical * 0.35),
+        mixHex(backgroundPalette[1].light, backgroundPalette[1].deep, 0.09 + vertical * 0.21),
         openTone.light,
-        openAmount * 0.18,
+        openAmount * 0.12,
       );
       const gradient = ctx.createLinearGradient(0, 0, state.width, 0);
       for (let i = 0; i <= stops; i += 1) {
@@ -1722,17 +1897,17 @@
     }
 
     ctx.save();
-    ctx.globalAlpha = 0.035 + d * 0.035;
+    ctx.globalAlpha = 0.014 + d * 0.014;
     ctx.globalCompositeOperation = "screen";
     for (let i = 0; i < 5; i += 1) {
       const baseY = state.height * (0.1 + i * 0.22);
-      const phase = time / (15000 + i * 2300) + i * 1.7;
-      const color = i % 2 === 0 ? palette[0].light : palette[1].light;
+      const phase = flowTime / (12800 + i * 1900) + i * 1.7;
+      const color = i % 2 === 0 ? backgroundPalette[0].light : backgroundPalette[1].light;
       const thickness = 74 + d * 76 + i * 8;
       const left = -state.width * 0.16;
       const right = state.width * 1.16;
       const step = Math.max(42, state.width / 6);
-      ctx.fillStyle = colorWithAlpha(color, 0.22);
+      ctx.fillStyle = colorWithAlpha(color, 0.1);
       ctx.beginPath();
       for (let x = left; x <= right + 0.1; x += step) {
         const topY =
@@ -1762,22 +1937,22 @@
     if (stage > 0) {
       ctx.save();
       ctx.translate(state.width * 0.5, state.height * 0.5);
-      ctx.rotate((time / (170000 - stage * 14000)) * (0.6 + stage * 0.08));
-      ctx.globalAlpha = 0.015 + stage * 0.006;
+      ctx.rotate((flowTime / (138000 - stage * 11000)) * (0.6 + stage * 0.08));
+      ctx.globalAlpha = 0.008 + stage * 0.004;
       ctx.globalCompositeOperation = "screen";
       const span = Math.max(state.width, state.height) * 1.55;
       for (let i = 0; i < 3; i += 1) {
-        const offset = (i - 1) * span * 0.28 + Math.sin(time / (52000 + i * 9000)) * span * 0.06;
-        const color = i % 2 === 0 ? palette[0].light : palette[1].light;
+        const offset = (i - 1) * span * 0.28 + Math.sin(flowTime / (42000 + i * 7200)) * span * 0.06;
+      const color = i % 2 === 0 ? backgroundPalette[0].light : backgroundPalette[1].light;
         const gradient = ctx.createLinearGradient(-span * 0.5, offset, span * 0.5, offset + span * 0.2);
         gradient.addColorStop(0, colorWithAlpha(color, 0));
-        gradient.addColorStop(0.45, colorWithAlpha(color, 0.25));
+        gradient.addColorStop(0.45, colorWithAlpha(color, 0.12));
         gradient.addColorStop(1, colorWithAlpha(color, 0));
         ctx.fillStyle = gradient;
         ctx.beginPath();
         ctx.moveTo(-span, offset - span * 0.08);
         for (let x = -span; x <= span; x += span / 6) {
-          const y = offset + Math.sin(x * 0.004 + time / (44000 + i * 6000)) * (22 + stage * 8);
+          const y = offset + Math.sin(x * 0.004 + flowTime / (35000 + i * 4800)) * (22 + stage * 8);
           ctx.lineTo(x, y);
         }
         ctx.lineTo(span, offset + span * 0.18);
@@ -1789,32 +1964,32 @@
     }
 
     ctx.save();
-    ctx.globalAlpha = 0.025 + d * 0.025;
+    ctx.globalAlpha = 0.01 + d * 0.012;
     ctx.globalCompositeOperation = "screen";
     for (let i = 0; i < 3; i += 1) {
       const centerX =
         state.width * (0.2 + i * 0.3) +
-        Math.sin(time / (18000 + i * 3200) + i * 1.4) * state.width * 0.16;
+        Math.sin(flowTime / (15000 + i * 2600) + i * 1.4) * state.width * 0.16;
       const width = state.width * (0.54 + d * 0.16);
       const left = centerX - width * 0.5;
       const right = centerX + width * 0.5;
       const gradient = ctx.createLinearGradient(left, 0, right, 0);
-      const color = i % 2 === 0 ? palette[1].light : palette[0].light;
+      const color = i % 2 === 0 ? backgroundPalette[1].light : backgroundPalette[0].light;
       const step = Math.max(54, state.height / 8);
       gradient.addColorStop(0, colorWithAlpha(color, 0));
-      gradient.addColorStop(0.5, colorWithAlpha(color, 0.3));
+      gradient.addColorStop(0.5, colorWithAlpha(color, 0.13));
       gradient.addColorStop(1, colorWithAlpha(color, 0));
       ctx.fillStyle = gradient;
       ctx.beginPath();
       ctx.moveTo(left, -20);
       for (let y = -20; y <= state.height + 20; y += step) {
-        const x = left + Math.sin(y * 0.006 + time / (21000 + i * 1900) + i) * state.width * 0.08;
+        const x = left + Math.sin(y * 0.006 + flowTime / (17000 + i * 1500) + i) * state.width * 0.08;
         ctx.lineTo(x, y);
       }
       for (let y = state.height + 20; y >= -20; y -= step) {
         const x =
           right +
-          Math.sin(y * 0.006 + time / (23000 + i * 2100) + i * 1.6) * state.width * 0.08;
+          Math.sin(y * 0.006 + flowTime / (18400 + i * 1700) + i * 1.6) * state.width * 0.08;
         ctx.lineTo(x, y);
       }
       ctx.closePath();
@@ -1957,8 +2132,8 @@
     ctx.rotate(driftRotation);
     ctx.scale(aspect.x * (1 + squash), aspect.y * (1 - squash * 0.48));
 
-    ctx.shadowColor = colorWithAlpha(color.deep, 0.18);
-    ctx.shadowBlur = r * 0.34;
+    ctx.shadowColor = colorWithAlpha(color.deep, 0.26);
+    ctx.shadowBlur = r * 0.44;
     traceShape(1.02);
     const body = ctx.createRadialGradient(-r * 0.34, -r * 0.42, r * 0.08, 0, 0, r * 1.12);
     body.addColorStop(0, "rgba(255, 255, 255, 0.94)");
@@ -2018,13 +2193,17 @@
     }
 
     ctx.globalCompositeOperation = "source-over";
+    traceShape(1.06);
+    ctx.strokeStyle = colorWithAlpha(color.deep, bubble.isWhite ? 0.16 : 0.22);
+    ctx.lineWidth = Math.max(1.4, r * 0.07);
+    ctx.stroke();
     traceShape(1.01);
-    ctx.strokeStyle = colorWithAlpha(color.light, 0.58);
-    ctx.lineWidth = Math.max(1.3, r * 0.06);
+    ctx.strokeStyle = colorWithAlpha(color.light, 0.68);
+    ctx.lineWidth = Math.max(1.4, r * 0.062);
     ctx.stroke();
     traceShape(0.92);
-    ctx.strokeStyle = "rgba(255,255,255,0.22)";
-    ctx.lineWidth = Math.max(1, r * 0.028);
+    ctx.strokeStyle = "rgba(255,255,255,0.28)";
+    ctx.lineWidth = Math.max(1, r * 0.032);
     ctx.stroke();
 
     ctx.globalAlpha *= 0.72;
@@ -2169,14 +2348,17 @@
     ctx.save();
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    ctx.strokeStyle = "rgba(255,255,255,0.82)";
-    ctx.lineWidth = Math.max(2.4, r * 0.09);
+    ctx.shadowColor = colorWithAlpha(clearTone.light, 0.52);
+    ctx.shadowBlur = r * 0.18;
+    ctx.strokeStyle = "rgba(255,255,255,0.94)";
+    ctx.lineWidth = Math.max(3, r * 0.11);
     ctx.beginPath();
     ctx.moveTo(x - r * 0.28, y);
     ctx.lineTo(x + r * 0.28, y);
     ctx.moveTo(x, y - r * 0.28);
     ctx.lineTo(x, y + r * 0.28);
     ctx.stroke();
+    ctx.shadowBlur = 0;
 
     ctx.strokeStyle = colorWithAlpha(palette[1].light, 0.52);
     ctx.lineWidth = Math.max(1.5, r * 0.045);
@@ -2204,13 +2386,16 @@
   function drawBombMark(x, y, r) {
     ctx.save();
     ctx.lineCap = "round";
-    ctx.strokeStyle = "rgba(255,255,255,0.86)";
-    ctx.fillStyle = colorWithAlpha(bombTone.deep, 0.72);
-    ctx.lineWidth = Math.max(2, r * 0.08);
+    ctx.shadowColor = colorWithAlpha(bombTone.light, 0.54);
+    ctx.shadowBlur = r * 0.2;
+    ctx.strokeStyle = "rgba(255,255,255,0.94)";
+    ctx.fillStyle = colorWithAlpha(bombTone.deep, 0.84);
+    ctx.lineWidth = Math.max(2.4, r * 0.095);
     ctx.beginPath();
-    ctx.arc(x, y + r * 0.08, r * 0.32, 0, Math.PI * 2);
+    ctx.arc(x, y + r * 0.08, r * 0.35, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    ctx.shadowBlur = 0;
     ctx.beginPath();
     ctx.moveTo(x + r * 0.18, y - r * 0.16);
     ctx.quadraticCurveTo(x + r * 0.32, y - r * 0.44, x + r * 0.06, y - r * 0.48);
@@ -2221,15 +2406,32 @@
   function drawBlasts() {
     state.blasts.forEach((blast) => {
       const t = blast.age / blast.life;
+      const fade = Math.max(0, 1 - t);
+      const color = blast.color ?? bombTone.light;
+      const accent = blast.accentColor ?? "#ffffff";
+      const rings = blast.rings ?? 1;
       ctx.save();
-      ctx.globalAlpha = Math.max(0, 1 - t) * 0.58;
-      ctx.strokeStyle = bombTone.light;
-      ctx.lineWidth = 7 * (1 - t) + 2;
+      ctx.globalCompositeOperation = "screen";
+      ctx.globalAlpha = fade * (blast.decorative ? 0.72 : 0.82);
+      ctx.strokeStyle = color;
+      ctx.shadowColor = colorWithAlpha(color, 0.44);
+      ctx.shadowBlur = 14 + 12 * fade;
+      ctx.lineWidth = (blast.decorative ? 12 : 10) * fade + 2.4;
       ctx.beginPath();
       ctx.arc(blast.x, blast.y, blast.radius, 0, Math.PI * 2);
       ctx.stroke();
-      ctx.globalAlpha = Math.max(0, 1 - t) * 0.16;
-      ctx.fillStyle = bombTone.light;
+      ctx.shadowBlur = 0;
+      for (let i = 1; i < rings; i += 1) {
+        const innerRadius = Math.max(4, blast.radius - i * (blast.decorative ? 34 : 26));
+        ctx.globalAlpha = fade * (blast.decorative ? 0.26 : 0.34) * (1 - i * 0.18);
+        ctx.strokeStyle = i % 2 === 0 ? color : accent;
+        ctx.lineWidth = Math.max(1.4, (blast.decorative ? 5.2 : 4.2) * fade);
+        ctx.beginPath();
+        ctx.arc(blast.x, blast.y, innerRadius, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = fade * (blast.fillAlpha ?? 0.16);
+      ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(blast.x, blast.y, blast.radius * 0.9, 0, Math.PI * 2);
       ctx.fill();
@@ -2283,14 +2485,17 @@
     state.floaters.forEach((floater) => {
       const t = floater.age / floater.life;
       const alpha = Math.max(0, 1 - t);
-      const size = 18 * floater.scale;
+      const pop = 1 + Math.sin(Math.min(1, t * 2.2) * Math.PI) * 0.14;
+      const size = 18 * floater.scale * pop;
       ctx.save();
       ctx.globalAlpha = alpha;
-      ctx.font = `900 ${size}px Inter, "Microsoft YaHei", sans-serif`;
+      ctx.font = `1000 ${size}px "Arial Rounded MT Bold", "PingFang SC", "Microsoft YaHei UI", ui-rounded, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.lineWidth = Math.max(3, size * 0.18);
-      ctx.strokeStyle = "rgba(20, 48, 66, 0.24)";
+      ctx.lineWidth = Math.max(3.2, size * 0.2);
+      ctx.strokeStyle = "rgba(20, 48, 66, 0.26)";
+      ctx.shadowColor = colorWithAlpha("#ffffff", 0.16 * alpha);
+      ctx.shadowBlur = 10;
       ctx.fillStyle = floater.color;
       ctx.strokeText(floater.text, floater.x, floater.y);
       ctx.fillText(floater.text, floater.x, floater.y);
@@ -2348,7 +2553,7 @@
     }
 
     ctx.globalAlpha = Math.min(1, state.difficultyFlash * 1.8);
-    ctx.font = "900 24px Inter, \"Microsoft YaHei\", sans-serif";
+    ctx.font = "1000 24px \"Arial Rounded MT Bold\", \"PingFang SC\", \"Microsoft YaHei UI\", ui-rounded, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.lineWidth = 5;
@@ -2388,8 +2593,9 @@
       const now = audioContext.currentTime + delayOffset;
       const isSpecial = kind === "super" || kind === "clear";
       const comboLevel = Math.max(0, state.combo - 1);
-      const pitchLift = Math.min(isSpecial ? 0.1 : 0.18, comboLevel * 0.014);
-      const comboGain = 1 + Math.min(0.12, comboLevel * 0.01);
+      const comboTier = Math.min(4, Math.floor(comboLevel / 4));
+      const pitchLift = Math.min(isSpecial ? 0.12 : 0.24, comboLevel * 0.017);
+      const comboGain = 1 + Math.min(0.2, comboLevel * 0.014);
       const base = kind === "small" ? 610 : kind === "large" ? 430 : kind === "clear" ? 520 : 560;
       const chime = kind === "small" ? 1180 : kind === "large" ? 820 : kind === "clear" ? 1120 : 1200;
       const peak = (kind === "small" ? 0.018 : isSpecial ? 0.038 : 0.026) * comboGain;
@@ -2448,12 +2654,29 @@
       playTone("sine", base * 1.08 * lift, base * 0.82 * lift, peak, duration, 0, 0.016, 1350);
       playTone("triangle", base * 1.55 * lift, base * 1.2 * lift, peak * 0.18, duration * 0.55, duration * 0.08, 0.018, 1500);
       if (comboLevel > 0) {
-        const accentVolume = Math.min(0.016, 0.006 + comboLevel * 0.0009);
-        const accentStart = chime * (1 + Math.min(0.12, comboLevel * 0.006)) * lift;
-        playTone("sine", accentStart, accentStart * 1.04, accentVolume, 0.054, duration * 0.48, 0.016, 1700);
+        const accentVolume = Math.min(0.027, 0.007 + comboLevel * 0.00135);
+        const accentStart = chime * (1 + Math.min(0.2, comboLevel * 0.009)) * lift;
+        playTone("sine", accentStart, accentStart * 1.06, accentVolume, 0.062, duration * 0.4, 0.014, 2050);
+        if (state.combo >= 4) {
+          playTone(
+            "sine",
+            accentStart * (1.18 + comboTier * 0.035),
+            accentStart * (1.2 + comboTier * 0.04),
+            Math.min(0.016, accentVolume * 0.72),
+            0.064,
+            duration * 0.62,
+            0.018,
+            2100,
+          );
+        }
       }
       if (state.combo >= 5 && state.combo % 5 === 0) {
-        playTone("sine", chime * 1.08 * lift, chime * 1.18 * lift, 0.012, 0.09, 0.058, 0.018, 1800);
+        const milestoneBase = chime * (1.18 + comboTier * 0.035) * lift;
+        playTone("sine", milestoneBase, milestoneBase * 1.14, 0.021, 0.11, 0.044, 0.016, 2350);
+        playTone("triangle", milestoneBase * 1.48, milestoneBase * 1.58, 0.011, 0.14, 0.08, 0.018, 2550);
+        if (state.combo >= 10) {
+          playTone("sine", milestoneBase * 1.92, milestoneBase * 2.02, 0.007, 0.11, 0.13, 0.018, 2800);
+        }
       }
     } catch {
       audioContext = null;
