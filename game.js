@@ -30,6 +30,14 @@
   const maxFloaters = 10;
   const maxHints = 10;
   const debugUpdateMs = 500;
+  const waterBudgetRounds = [
+    { count: 10, total: 300 },
+    { count: 20, total: 250 },
+    { count: 40, total: 200 },
+    { count: 60, total: 150 },
+    { count: 100, total: 150 },
+    { count: 150, total: 120 },
+  ];
 
   const palette = [
     { name: "湖雾蓝", color: "#6eafc0", deep: "#3f7f91", light: "#cbe8ef" },
@@ -70,6 +78,12 @@
     comboUntil: 0,
     clearSkillCharge: 1,
     clearSkillUses: 0,
+    waterRoundIndex: 0,
+    waterRoundSpawned: 0,
+    waterOpportunityCount: 0,
+    bombComboProgress: 0,
+    bombComboTarget: 18,
+    bombSpawnCursor: 0,
     difficultyTier: 0,
     difficultyFlash: 0,
     openPopCount: 0,
@@ -185,9 +199,9 @@
 
   function backgroundMotionTime(time = state.visualTime) {
     const d = difficulty();
-    const highDifficulty = smoothstep(0.45, 1, d);
-    const lateFlow = smoothstep(72, 168, state.elapsed / 1000);
-    return time * (1 + highDifficulty * 0.34 + lateFlow * 0.34);
+    const highDifficulty = smoothstep(0.55, 1, d);
+    const lateFlow = smoothstep(96, 196, state.elapsed / 1000);
+    return time * (1 + highDifficulty * 0.16 + lateFlow * 0.14);
   }
 
   function backgroundBoundaryForY(y, time = state.visualTime) {
@@ -195,9 +209,9 @@
     const ny = state.height > 0 ? y / state.height : 0.5;
     return (
       0.5 +
-      Math.sin(flowTime / 21000) * 0.1 +
-      Math.sin(ny * Math.PI * 1.55 + flowTime / 14200) * 0.11 +
-      Math.sin(ny * Math.PI * 3.2 - flowTime / 24200) * 0.035
+      Math.sin(flowTime / 28000) * 0.07 +
+      Math.sin(ny * Math.PI * 1.25 + flowTime / 22000) * 0.075 +
+      Math.sin(ny * Math.PI * 2.35 - flowTime / 36000) * 0.018
     );
   }
 
@@ -256,32 +270,32 @@
     const highFlow = highFlowAmount();
     const radius = Math.hypot(cx, cy);
     const angle = Math.atan2(cy, cx);
-    const diagonal = wave * (fy - 0.5) * (0.14 + Math.sin(flowTime / 39000) * 0.032);
-    const primaryFlow = smoothstep(0.16, 0.76, d) * Math.sin((fx * 0.66 + fy * 0.5) * Math.PI * 2 + flowTime / 30000) * 0.078;
-    const secondaryFlow = smoothstep(0.42, 1, d) * Math.sin((fx * 0.95 - fy * 0.54) * Math.PI * 2 - flowTime / 45500) * 0.034;
-    const broadSwell = wave * Math.sin((fx * 0.32 + fy * 0.84) * Math.PI * 2 - flowTime / 52000) * 0.04;
+    const diagonal = wave * (fy - 0.5) * (0.09 + Math.sin(flowTime / 52000) * 0.018);
+    const primaryFlow = smoothstep(0.16, 0.76, d) * Math.sin((fx * 0.58 + fy * 0.42) * Math.PI * 2 + flowTime / 44000) * 0.044;
+    const secondaryFlow = smoothstep(0.42, 1, d) * Math.sin((fx * 0.72 - fy * 0.42) * Math.PI * 2 - flowTime / 64000) * 0.018;
+    const broadSwell = wave * Math.sin((fx * 0.26 + fy * 0.72) * Math.PI * 2 - flowTime / 72000) * 0.022;
     const rotationalRibbon =
       stage > 0
         ? Math.sin((fx * (0.62 + stage * 0.05) - fy * 0.42) * Math.PI * 2 + flowTime / (52000 + stage * 7600)) *
-          (0.012 + stageMix * 0.026)
+          (0.008 + stageMix * 0.014)
         : 0;
     const slowCurl =
       stage > 1
         ? Math.sin((Math.hypot(cx, cy) * (1.08 + stage * 0.12) + fx * 0.18 - fy * 0.16) * Math.PI * 2 - flowTime / 76000) *
-          (0.008 + stageMix * 0.017)
+          (0.005 + stageMix * 0.009)
         : 0;
     const orbitSwell =
       highFlow *
       Math.sin(angle + radius * Math.PI * 2.35 - flowTime / 86000) *
-      (0.008 + stageMix * 0.012);
+      (0.005 + stageMix * 0.007);
     const wideCurrent =
       highFlow *
       Math.sin((fx * 0.3 + fy * 0.72) * Math.PI * 2 + Math.sin(flowTime / 78000) * 0.86) *
-      (0.01 + stageMix * 0.01);
+      (0.006 + stageMix * 0.006);
     const counterCurrent =
       smoothstep(2.15, 3.7, stage) *
       Math.sin((fx * 0.74 - fy * 0.2 + radius * 0.14) * Math.PI * 2 - flowTime / 124000) *
-      0.012;
+      0.006;
     const field =
       fx +
       diagonal +
@@ -294,11 +308,11 @@
       wideCurrent +
       counterCurrent;
     const softness =
-      0.28 +
-      smoothstep(0.25, 1, d) * 0.026 +
-      stageMix * 0.012 +
-      highFlow * 0.01 +
-      Math.sin(flowTime / 42000) * 0.006;
+      0.32 +
+      smoothstep(0.25, 1, d) * 0.018 +
+      stageMix * 0.008 +
+      highFlow * 0.006 +
+      Math.sin(flowTime / 52000) * 0.004;
     return smoothstep(boundary - softness, boundary + softness, field);
   }
 
@@ -398,8 +412,38 @@
     return edgeCycle[Math.floor(Math.random() * edgeCycle.length)];
   }
 
+  function pickBombComboTarget() {
+    return Math.round(rand(10, 30));
+  }
+
+  function resetBombComboTimer() {
+    state.bombComboProgress = 0;
+    state.bombComboTarget = pickBombComboTarget();
+  }
+
+  function currentWaterBudgetRound() {
+    return waterBudgetRounds[Math.min(state.waterRoundIndex, waterBudgetRounds.length - 1)];
+  }
+
+  function nextBubbleWaterValue() {
+    const round = currentWaterBudgetRound();
+    const value = round.total / round.count;
+    state.waterRoundSpawned += 1;
+    state.waterOpportunityCount += 1;
+    if (state.waterRoundSpawned >= round.count && state.waterRoundIndex < waterBudgetRounds.length - 1) {
+      state.waterRoundIndex += 1;
+      state.waterRoundSpawned = 0;
+    }
+    return value;
+  }
+
+  function comboWaterBoost(base) {
+    if (state.combo <= 1) return 0;
+    return base * Math.min(0.35, (state.combo - 1) * 0.018);
+  }
+
   function comboWaterBonus() {
-    return Math.min(5, Math.floor(Math.max(0, state.combo - 1) / 5));
+    return Math.min(1.2, Math.floor(Math.max(0, state.combo - 1) / 5) * 0.24);
   }
 
   function comboScoreBonus() {
@@ -462,8 +506,18 @@
     state.bestCombo = Math.max(state.bestCombo, state.combo);
     state.comboPulse = 1;
     state.comboUntil = state.elapsed + comboWindow();
-    if (chargeSkill && state.combo > 1) {
-      chargeClearSkill(0.012 + Math.min(0.018, state.combo * 0.002));
+    if (chargeSkill) {
+      if (state.combo > 1) {
+        chargeClearSkill(0.012 + Math.min(0.018, state.combo * 0.002));
+      }
+      state.bombComboProgress += 1;
+      if (state.combo >= 10 && state.bombComboProgress >= state.bombComboTarget) {
+        if (spawnComboBomb()) {
+          resetBombComboTimer();
+        } else {
+          state.bombComboProgress = state.bombComboTarget;
+        }
+      }
     }
   }
 
@@ -471,6 +525,7 @@
     state.combo = 0;
     state.comboPulse = 0;
     state.comboUntil = 0;
+    resetBombComboTimer();
   }
 
   function makeOpenTone() {
@@ -558,6 +613,11 @@
     state.bestCombo = 0;
     state.clearSkillCharge = 1;
     state.clearSkillUses = 0;
+    state.waterRoundIndex = 0;
+    state.waterRoundSpawned = 0;
+    state.waterOpportunityCount = 0;
+    resetBombComboTimer();
+    state.bombSpawnCursor = 0;
     state.difficultyTier = 0;
     state.difficultyFlash = 0;
     state.openPopCount = 0;
@@ -691,8 +751,7 @@
     if (bubble.isBleach) return 5.4;
     if (bubble.isBomb) return 4.2;
     if (bubble.isWhite) return bubble.baseRadius <= 27 || bubble.isStream ? 1.4 : 2.2;
-    if (bubble.isStream) return 2.8;
-    return bubble.baseRadius <= 27 ? 3.7 : 5.35;
+    return bubble.waterValue ?? (bubble.baseRadius <= 27 ? 3.7 : 5.35);
   }
 
   function noteWaterOpportunity(bubble) {
@@ -777,6 +836,7 @@
     }
 
     const colorIndex = kind === "normal" ? (options.colorIndex ?? pickBalancedColorIndex()) : -1;
+    const waterValue = kind === "normal" ? (options.waterValue ?? nextBubbleWaterValue()) : 0;
     const spriteColorIndex = colorIndex >= 0 ? colorIndex : pickColorIndex();
     const spriteIndex = options.spriteIndex ?? pickBubbleSprite(spriteColorIndex, radius, smallWave);
     const target =
@@ -802,6 +862,7 @@
       skinPhase: rand(0, Math.PI * 2),
       radius,
       baseRadius: radius,
+      waterValue,
       colorIndex,
       isSuper,
       isClear,
@@ -848,6 +909,39 @@
     if (edge === "right") return { x: state.width + radius, y: clamp(offset, margin, state.height - margin) };
     if (edge === "top") return { x: clamp(offset, margin, state.width - margin), y: -radius };
     return { x: clamp(offset, margin, state.width - margin), y: state.height + radius };
+  }
+
+  function spawnComboBomb() {
+    if (!state.running || state.bubbles.length >= maxActiveBubbles) return false;
+    const d = difficulty();
+    const edge = edgeCycle[state.bombSpawnCursor % edgeCycle.length];
+    state.bombSpawnCursor += 1;
+    const radius = radiusForDifficulty(d, "normal") * rand(0.74, 0.88);
+    const horizontal = edge === "left" || edge === "right";
+    const anchor =
+      (horizontal ? state.height : state.width) *
+      clamp(0.5 + Math.sin(state.combo * 0.47 + state.bombSpawnCursor) * 0.24, 0.22, 0.78);
+    const start = pointFromEdge(edge, radius, anchor);
+    const target = horizontal
+      ? {
+          x: edge === "left" ? state.width * 0.76 : state.width * 0.24,
+          y: clamp(anchor + Math.sin(state.combo * 0.31) * state.height * 0.13, state.height * 0.22, state.height * 0.78),
+        }
+      : {
+          x: clamp(anchor + Math.cos(state.combo * 0.29) * state.width * 0.13, state.width * 0.22, state.width * 0.78),
+          y: edge === "top" ? state.height * 0.72 : state.height * 0.28,
+        };
+    const speed = rand(62 + d * 18, 82 + d * 24);
+    const velocity = aimedVelocity(start.x, start.y, target, speed, 2);
+    return spawnBubble(false, "bomb", {
+      edge,
+      x: start.x,
+      y: start.y,
+      target,
+      velocity,
+      radius,
+      speed,
+    });
   }
 
   function makeSpawnHint(edge, x, y, radius, color, alpha = 0.36, count = 1) {
@@ -1023,7 +1117,7 @@
     if (state.bubbles.length >= maxActiveBubbles) return;
 
     if (state.elapsed >= state.nextPowerAt && state.bubbles.length >= 2 && state.bubbles.length <= maxActiveBubbles - 1) {
-      spawnBubble(false, Math.random() < 0.52 ? "bomb" : "bleach");
+      spawnBubble(false, "bleach");
       state.nextPowerAt = state.elapsed + rand(11500 - d * 2400, 19000 - d * 3400);
       return;
     }
@@ -1054,7 +1148,7 @@
 
     const normalAnchorIndex = count > 1 ? Math.floor(rand(0, count)) : -1;
     for (let index = 0; index < count; index += 1) {
-      const smallChance = clamp(0.08 + d * 0.48 + (index > 0 ? 0.1 : 0) + (count > 3 ? 0.08 : 0), 0.08, 0.7);
+      const smallChance = clamp(0.54 + d * 0.22 + (index > 0 ? 0.08 : 0) + (count > 3 ? 0.05 : 0), 0.52, 0.82);
       const sizeKind = index === normalAnchorIndex ? "normal" : Math.random() < smallChance ? "small" : null;
       spawnBubble(false, null, { sizeKind });
     }
@@ -1268,7 +1362,7 @@
     state.poppedCount += 1;
     registerCombo({ chargeSkill: false });
     state.score += bubble.isWhite ? 1 : 1;
-    addWater(bubble.isWhite ? 1.3 : 1.8);
+    addWater(bubble.isWhite ? 1.1 : Math.min(2.4, (bubble.waterValue ?? 1.8) * 0.42));
     state.ripples.push({
       x: bubble.x,
       y: bubble.y,
@@ -1452,13 +1546,14 @@
       state.openPopCount += 1;
     }
 
+    const baseBudgetWater = bubble.waterValue ?? (isSmall ? 3 : 4.2);
     const waterGain = bubble.isWhite
       ? isSmall ? 1.5 : 2.5
       : bubble.isSuper
       ? 16
       : isOpen
-        ? 7 + comboWaterBonus()
-        : (isSmall ? 4 : 6) + comboWaterBonus();
+        ? baseBudgetWater * 0.72 + comboWaterBoost(baseBudgetWater) * 0.7
+        : baseBudgetWater + comboWaterBoost(baseBudgetWater);
     const scoreGain = bubble.isWhite
       ? 1
       : bubble.isSuper
@@ -1915,7 +2010,8 @@
     ctx.lineJoin = "round";
     ctx.beginPath();
     for (let y = -gap; y <= state.height + gap; y += gap) {
-      const x = backgroundBoundaryXAtY(y, time, previousX);
+      const guideX = backgroundBoundaryGuideX(y, time);
+      const x = previousX === null ? guideX : previousX * 0.74 + guideX * 0.26;
       previousX = x;
       if (y <= -gap + 0.1) {
         ctx.moveTo(x, y);
@@ -1923,14 +2019,14 @@
         ctx.lineTo(x, y);
       }
     }
-    ctx.shadowColor = colorWithAlpha(boundaryTone, 0.22);
-    ctx.shadowBlur = 9 + d * 5;
-    ctx.strokeStyle = colorWithAlpha(boundaryTone, 0.14 + d * 0.038 + highFlow * 0.016);
-    ctx.lineWidth = 5.2 + d * 1.5;
+    ctx.shadowColor = colorWithAlpha(boundaryTone, 0.12);
+    ctx.shadowBlur = 5 + d * 2;
+    ctx.strokeStyle = colorWithAlpha(boundaryTone, 0.09 + d * 0.018 + highFlow * 0.006);
+    ctx.lineWidth = 3.6 + d * 0.8;
     ctx.stroke();
     ctx.shadowBlur = 0;
-    ctx.strokeStyle = colorWithAlpha("#ffffff", 0.072 + d * 0.014);
-    ctx.lineWidth = 1.15;
+    ctx.strokeStyle = colorWithAlpha("#ffffff", 0.045 + d * 0.008);
+    ctx.lineWidth = 0.8;
     ctx.stroke();
     ctx.restore();
   }
@@ -1947,12 +2043,12 @@
       const bandY = y + rowHeight * 0.5;
       const vertical = state.height > 0 ? bandY / state.height : 0.5;
       const colorA = mixHex(
-        mixHex(backgroundPalette[0].light, backgroundPalette[0].deep, 0.09 + vertical * 0.2),
+        mixHex(backgroundPalette[0].light, backgroundPalette[0].deep, 0.07 + vertical * 0.16),
         openTone.light,
         openAmount * 0.12,
       );
       const colorB = mixHex(
-        mixHex(backgroundPalette[1].light, backgroundPalette[1].deep, 0.09 + vertical * 0.21),
+        mixHex(backgroundPalette[1].light, backgroundPalette[1].deep, 0.07 + vertical * 0.17),
         openTone.light,
         openAmount * 0.12,
       );
@@ -1967,17 +2063,17 @@
     }
 
     ctx.save();
-    ctx.globalAlpha = 0.014 + d * 0.014;
+    ctx.globalAlpha = 0.007 + d * 0.007;
     ctx.globalCompositeOperation = "screen";
     for (let i = 0; i < 5; i += 1) {
       const baseY = state.height * (0.1 + i * 0.22);
-      const phase = flowTime / (12800 + i * 1900) + i * 1.7;
+      const phase = flowTime / (22000 + i * 3200) + i * 1.7;
       const color = i % 2 === 0 ? backgroundPalette[0].light : backgroundPalette[1].light;
       const thickness = 74 + d * 76 + i * 8;
       const left = -state.width * 0.16;
       const right = state.width * 1.16;
       const step = Math.max(42, state.width / 6);
-      ctx.fillStyle = colorWithAlpha(color, 0.1);
+      ctx.fillStyle = colorWithAlpha(color, 0.055);
       ctx.beginPath();
       for (let x = left; x <= right + 0.1; x += step) {
         const topY =
@@ -2008,7 +2104,7 @@
       ctx.save();
       ctx.translate(state.width * 0.5, state.height * 0.5);
       ctx.rotate((flowTime / (138000 - stage * 11000)) * (0.6 + stage * 0.08));
-      ctx.globalAlpha = 0.008 + stage * 0.004;
+      ctx.globalAlpha = 0.004 + stage * 0.0025;
       ctx.globalCompositeOperation = "screen";
       const span = Math.max(state.width, state.height) * 1.55;
       for (let i = 0; i < 3; i += 1) {
@@ -2016,7 +2112,7 @@
       const color = i % 2 === 0 ? backgroundPalette[0].light : backgroundPalette[1].light;
         const gradient = ctx.createLinearGradient(-span * 0.5, offset, span * 0.5, offset + span * 0.2);
         gradient.addColorStop(0, colorWithAlpha(color, 0));
-        gradient.addColorStop(0.45, colorWithAlpha(color, 0.12));
+        gradient.addColorStop(0.45, colorWithAlpha(color, 0.07));
         gradient.addColorStop(1, colorWithAlpha(color, 0));
         ctx.fillStyle = gradient;
         ctx.beginPath();
@@ -2034,7 +2130,7 @@
     }
 
     ctx.save();
-    ctx.globalAlpha = 0.01 + d * 0.012;
+    ctx.globalAlpha = 0.005 + d * 0.006;
     ctx.globalCompositeOperation = "screen";
     for (let i = 0; i < 3; i += 1) {
       const centerX =
@@ -2047,7 +2143,7 @@
       const color = i % 2 === 0 ? backgroundPalette[1].light : backgroundPalette[0].light;
       const step = Math.max(54, state.height / 8);
       gradient.addColorStop(0, colorWithAlpha(color, 0));
-      gradient.addColorStop(0.5, colorWithAlpha(color, 0.13));
+      gradient.addColorStop(0.5, colorWithAlpha(color, 0.07));
       gradient.addColorStop(1, colorWithAlpha(color, 0));
       ctx.fillStyle = gradient;
       ctx.beginPath();
