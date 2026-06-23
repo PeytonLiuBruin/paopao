@@ -1,6 +1,6 @@
 (() => {
   "use strict";
-  const version = "20260623-intro-bubbles";
+  const version = "20260623-no-penalty-drain";
   const parts = Array.from({ length: 8 }, (_, index) => `./game.${version}.part${String(index).padStart(2, "0")}.js`);
   Promise.all(parts.map((path) => fetch(path, { cache: "no-cache" }).then((response) => {
     if (!response.ok) throw new Error(`load failed: ${path}`);
