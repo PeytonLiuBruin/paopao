@@ -12,6 +12,7 @@
       <canvas id="game" aria-label="游戏画面"></canvas>
 
       <section class="hud" aria-label="游戏状态">
+        <span id="difficultyLevel" class="difficulty-level">Lv 1</span>
         <div class="score-block water-block">
           <div class="water-topline">
             <span class="caption">水槽</span>
@@ -26,18 +27,24 @@
         <div class="score-block right">
           <span class="caption">分数</span>
           <strong id="score">0</strong>
+          <span id="timeValue" class="time-pill" aria-label="存活时间">0:00</span>
         </div>
       </section>
+
+      <button id="clearSkill" class="clear-skill ready" type="button" aria-label="清屏技能">
+        <span>清屏</span>
+        <strong id="clearSkillValue">READY</strong>
+      </button>
 
       <section id="curtain" class="curtain">
         <div class="title-mark">泡泡补水</div>
         <p class="start-copy">泡泡进入同色背景时戳破它，连击把水槽续满。</p>
         <button id="startButton" class="primary-button" type="button">开始</button>
-        <p id="endStats" class="end-stats"></p>
+        <div id="endStats" class="end-stats"></div>
       </section>
       <div id="startTransition" class="start-transition" aria-hidden="true"></div>
     </main>
 
-    <script src="./game.js?v=20260623-no-penalty-drain" defer></script>
+    <script src="./game.js?v=20260623-true-boundary" defer></script>
   </body>
 </html>

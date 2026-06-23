@@ -61,6 +61,23 @@ body {
   pointer-events: none;
 }
 
+.difficulty-level {
+  position: absolute;
+  top: 1px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.58);
+  background: rgba(12, 38, 58, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1.2;
+  letter-spacing: 0;
+  text-shadow: 0 1px 8px rgba(18, 50, 74, 0.16);
+}
+
 .score-block {
   min-width: 0;
   display: grid;
@@ -93,6 +110,7 @@ body {
 
 .score-block.right {
   justify-items: end;
+  gap: 3px;
 }
 
 .caption {
@@ -107,6 +125,66 @@ body {
   line-height: 1;
   font-weight: 900;
   font-variant-numeric: tabular-nums;
+}
+
+.time-pill {
+  margin-top: -1px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(12, 38, 58, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.clear-skill {
+  --clear-charge: 1;
+  position: absolute;
+  z-index: 3;
+  left: 14px;
+  bottom: calc(14px + var(--safe-bottom));
+  width: 62px;
+  height: 62px;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 2px;
+  color: rgba(255, 255, 255, 0.94);
+  background:
+    radial-gradient(circle at 50% 50%, rgba(247, 251, 250, 0.2), rgba(16, 48, 71, 0.24) 60%),
+    conic-gradient(#f7fbfa calc(var(--clear-charge) * 1turn), rgba(255, 255, 255, 0.18) 0);
+  box-shadow:
+    inset 0 0 0 5px rgba(16, 48, 71, 0.2),
+    0 8px 22px rgba(16, 48, 71, 0.22);
+  font: inherit;
+  pointer-events: auto;
+  opacity: 0.62;
+}
+
+.clear-skill.ready {
+  opacity: 0.96;
+}
+
+.clear-skill:disabled {
+  opacity: 0.42;
+}
+
+.clear-skill span {
+  font-size: 14px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.clear-skill strong {
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0;
 }
 
 .water-meter {
@@ -225,35 +303,6 @@ body {
     0 0 18px rgba(217, 162, 178, 0.34);
 }
 
-.mistakes {
-  position: absolute;
-  z-index: 3;
-  left: 50%;
-  bottom: calc(18px + var(--safe-bottom));
-  transform: translateX(-50%);
-  display: flex;
-  gap: 6px;
-  pointer-events: none;
-}
-
-.mistakes span {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.34);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16);
-  transition:
-    transform 180ms ease,
-    background 180ms ease,
-    opacity 180ms ease;
-}
-
-.mistakes span.used {
-  background: rgba(255, 255, 255, 0.86);
-  opacity: 0.72;
-  transform: scale(1.22);
-}
-
 .curtain {
   position: absolute;
   z-index: 4;
@@ -329,12 +378,31 @@ body {
 }
 
 .end-stats {
+  min-width: min(76vw, 300px);
   min-height: 22px;
   margin: 0;
-  font-size: 16px;
+  display: grid;
+  gap: 7px;
+  font-size: 14px;
   font-weight: 800;
   color: rgba(255, 255, 255, 0.9);
   text-shadow: 0 1px 12px rgba(9, 32, 52, 0.32);
+}
+
+.end-stats:empty {
+  display: block;
+  min-width: 0;
+}
+
+.end-stats span {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.end-stats strong {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
 }
 
 .start-transition {
