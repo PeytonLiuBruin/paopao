@@ -1,6 +1,6 @@
 (() => {
   "use strict";
-  const version = "20260623-combo";
+  const version = "20260623-combo-timer";
   const parts = Array.from({ length: 7 }, (_, index) => `./game.${version}.part${String(index).padStart(2, "0")}.js`);
   Promise.all(parts.map((path) => fetch(path, { cache: "no-cache" }).then((response) => {
     if (!response.ok) throw new Error(`load failed: ${path}`);
