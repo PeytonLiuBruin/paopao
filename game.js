@@ -17,10 +17,19 @@
   const difficultyEl = document.getElementById("difficultyLevel");
   const clearSkillButton = document.getElementById("clearSkill");
   const clearSkillValue = document.getElementById("clearSkillValue");
+  const perfDebug = document.getElementById("perfDebug");
   const bubbleAtlas = new Image();
   bubbleAtlas.src = "./assets/bubble-atlas.png";
-  const bubbleSpriteCell = 256;
+  const bubbleSpriteCell = 192;
   const bubbleSpriteCols = 5;
+  const targetFrameMs = 1000 / 30;
+  const maxActiveBubbles = 12;
+  const maxParticles = 72;
+  const maxRipples = 32;
+  const maxBlasts = 4;
+  const maxFloaters = 10;
+  const maxHints = 10;
+  const debugUpdateMs = 500;
 
   const palette = [
     { name: "湖雾蓝", color: "#6eafc0", deep: "#3f7f91", light: "#cbe8ef" },
@@ -84,6 +93,12 @@
 
   let audioContext;
   let introRunning = false;
+  let frameRequest = 0;
+  let lastFrameTime = 0;
+  let perfFrames = 0;
+  let perfFps = 0;
+  let perfLastTime = 0;
+  let perfLastUpdate = 0;
 
   function resize() {
     const rect = canvas.getBoundingClientRect();
@@ -130,6 +145,42 @@
   function smoothstep(edge0, edge1, value) {
     const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
     return t * t * (3 - 2 * t);
+  }
+
+  function trimArray(list, maxLength) {
+    if (list.length > maxLength) {
+      list.splice(0, list.length - maxLength);
+    }
+  }
+
+  function trimRuntimeEffects() {
+    trimArray(state.particles, maxParticles);
+    trimArray(state.ripples, maxRipples);
+    trimArray(state.blasts, maxBlasts);
+    trimArray(state.floaters, maxFloaters);
+    trimArray(state.hints, maxHints);
+  }
+
+  function clearRuntimeEffects() {
+    state.bubbles = [];
+    state.particles = [];
+    state.ripples = [];
+    state.blasts = [];
+    state.floaters = [];
+    state.hints = [];
+    state.activePointerId = null;
+  }
+
+  function updatePerfDebug(now = performance.now(), force = false) {
+    if (!perfDebug || (!force && now - perfLastUpdate < debugUpdateMs)) return;
+    perfLastUpdate = now;
+    const domCount = document.body.getElementsByTagName("*").length;
+    perfDebug.textContent = `FPS ${Math.round(perfFps)} | B ${state.bubbles.length}/${maxActiveBubbles} | P ${state.particles.length} | DOM ${domCount}`;
+  }
+
+  function scheduleLoop() {
+    if (frameRequest || document.hidden || !state.running) return;
+    frameRequest = requestAnimationFrame(loop);
   }
 
   function backgroundMotionTime(time = state.visualTime) {
@@ -517,13 +568,7 @@
     state.nextSpawnAt = 120;
     state.openUntil = 0;
     state.flash = 0;
-    state.bubbles = [];
-    state.particles = [];
-    state.ripples = [];
-    state.blasts = [];
-    state.floaters = [];
-    state.hints = [];
-    state.activePointerId = null;
+    clearRuntimeEffects();
     state.lastSwipeX = 0;
     state.lastSwipeY = 0;
     if (titleMark) {
@@ -532,6 +577,12 @@
     updateHud();
     curtain.classList.add("hidden");
     endStats.textContent = "";
+    lastFrameTime = performance.now();
+    perfFrames = 0;
+    perfLastTime = lastFrameTime;
+    draw();
+    updatePerfDebug(lastFrameTime, true);
+    scheduleLoop();
   }
 
   function endGame() {
@@ -560,6 +611,9 @@
         return row;
       }),
     );
+    clearRuntimeEffects();
+    updateHud();
+    updatePerfDebug(performance.now(), true);
   }
 
   function difficulty() {
@@ -686,6 +740,7 @@
   }
 
   function spawnBubble(forceSmall = false, forcedKind = null, options = {}) {
+    if (state.bubbles.length >= maxActiveBubbles) return false;
     const d = difficulty();
     const margin = 72;
     const edge = pickSpawnEdge(options.edge);
@@ -784,6 +839,7 @@
     if (!options.quietHint) {
       makeSpawnHint(edge, x, y, radius, hintColor, 0.46);
     }
+    return true;
   }
 
   function pointFromEdge(edge, radius, offset) {
@@ -810,6 +866,7 @@
       alpha,
       age: 0,
     });
+    trimArray(state.hints, maxHints);
   }
 
   function spawnBubbleStream(d) {
@@ -818,12 +875,14 @@
     const sameColorStream = streamLevel < 5;
     const streamColorIndex = sameColorStream ? pickBalancedColorIndex() : null;
     const pattern = sameColorStream ? "spray" : d > 0.38 && Math.random() < 0.46 + d * 0.2 ? "zigzag" : "spray";
-    const count =
+    const desiredCount =
       streamLevel <= 3
         ? Math.round(rand(10, 14))
         : streamLevel === 4
           ? Math.round(rand(13 + d * 2, 18 + d * 3))
           : Math.round(rand(16 + d * 2, 22 + d * 3));
+    const count = Math.min(desiredCount, Math.max(0, maxActiveBubbles - state.bubbles.length));
+    if (count <= 0) return;
     const radius = radiusForDifficulty(d, "stream");
     const cadence =
       streamLevel <= 3
@@ -885,7 +944,8 @@
 
   function spawnBubbleCluster(d, maxCount = 4) {
     const edge = pickSpawnEdge();
-    const count = Math.min(maxCount, Math.round(rand(2, 3 + d * 2)));
+    const count = Math.min(maxCount, Math.max(0, maxActiveBubbles - state.bubbles.length), Math.round(rand(2, 3 + d * 2)));
+    if (count <= 0) return;
     const radius = radiusForDifficulty(d, "cluster");
     const spacing = radius * rand(0.72, 1.04);
     const anchor =
@@ -916,7 +976,8 @@
 
   function spawnBubbleFan(d, maxCount = 4) {
     const edge = pickSpawnEdge();
-    const count = Math.min(maxCount, Math.round(rand(3, 4 + d * 2)));
+    const count = Math.min(maxCount, Math.max(0, maxActiveBubbles - state.bubbles.length), Math.round(rand(3, 4 + d * 2)));
+    if (count <= 0) return;
     const radius = radiusForDifficulty(d, "fan");
     const anchor =
       edge === "left" || edge === "right"
@@ -959,19 +1020,21 @@
     const baseInterval = Math.max(480, 1180 - d * 620 - Math.min(150, state.score * 1.35));
     state.nextSpawnAt = state.elapsed + baseInterval * rand(0.78, 1.08);
 
-    if (state.elapsed >= state.nextPowerAt && state.bubbles.length >= 2 && state.bubbles.length <= 18) {
+    if (state.bubbles.length >= maxActiveBubbles) return;
+
+    if (state.elapsed >= state.nextPowerAt && state.bubbles.length >= 2 && state.bubbles.length <= maxActiveBubbles - 1) {
       spawnBubble(false, Math.random() < 0.52 ? "bomb" : "bleach");
       state.nextPowerAt = state.elapsed + rand(11500 - d * 2400, 19000 - d * 3400);
       return;
     }
 
-    if (level >= 3 && state.elapsed >= state.nextStreamAt && state.bubbles.length <= (level === 3 ? 10 : 15)) {
+    if (level >= 3 && state.elapsed >= state.nextStreamAt && state.bubbles.length <= (level === 3 ? 7 : 8)) {
       spawnBubbleStream(d);
       state.nextStreamAt = state.elapsed + rand(13000 - d * 3800, 21000 - d * 5600);
       return;
     }
 
-    if (level >= 3 && state.bubbles.length <= 13) {
+    if (level >= 3 && state.bubbles.length <= maxActiveBubbles - 3) {
       const varietyRoll = Math.random();
       if (d > 0.2 && varietyRoll < (level === 3 ? 0.1 + d * 0.08 : 0.16 + d * 0.1)) {
         spawnBubbleCluster(d, maxWaveCount);
@@ -986,7 +1049,8 @@
     let count = 1;
     if (level >= 4 && d > 0.62 && Math.random() < (d - 0.5) * 0.28) count += Math.floor(rand(1, 3 + d * 1.5));
     if (level >= 5 && d > 0.86 && Math.random() < 0.12) count += Math.floor(rand(1, 3));
-    count = Math.min(maxWaveCount, count);
+    count = Math.min(maxWaveCount, Math.max(0, maxActiveBubbles - state.bubbles.length), count);
+    if (count <= 0) return;
 
     const normalAnchorIndex = count > 1 ? Math.floor(rand(0, count)) : -1;
     for (let index = 0; index < count; index += 1) {
@@ -1004,7 +1068,7 @@
       bubble.isSuper = false;
       bubble.openReady = true;
     });
-    for (let index = 0; index < 26; index += 1) {
+    for (let index = 0; index < 16; index += 1) {
       makeParticle(x, y, openTone.color, rand(80, 260), rand(0, Math.PI * 2), rand(0.45, 0.95), true);
     }
     state.ripples.push({ x, y, radius: 12, age: 0, life: 0.7, color: openTone.color, power: 1.25 });
@@ -1057,8 +1121,8 @@
         color: color.color,
       });
 
-      if (index < 14) {
-        for (let i = 0; i < 5; i += 1) {
+      if (index < 8) {
+        for (let i = 0; i < 3; i += 1) {
           makeParticle(
             bubble.x,
             bubble.y,
@@ -1073,7 +1137,7 @@
     });
 
     makeFloatText(origin.x + 18, origin.y - 42, `CLEAR x${Math.max(1, cleared.length)}`, clearTone.light, 1.34);
-    for (let i = 0; i < 64; i += 1) {
+    for (let i = 0; i < 30; i += 1) {
       makeParticle(origin.x, origin.y, i % 2 === 0 ? clearTone.color : palette[i % 4 === 0 ? 0 : 1].light, rand(160, 420), rand(0, Math.PI * 2), rand(0.42, 0.98), i % 3 === 0);
     }
   }
@@ -1133,7 +1197,7 @@
 
     state.flash = Math.max(state.flash, 0.22);
     makeFloatText(origin.x, origin.y - origin.radius, `去色 ${changed}`, whiteTone.light, 1.08);
-    for (let i = 0; i < 24; i += 1) {
+    for (let i = 0; i < 14; i += 1) {
       makeParticle(origin.x, origin.y, whiteTone.light, rand(80, 210), rand(0, Math.PI * 2), rand(0.26, 0.58), i % 5 === 0);
     }
   }
@@ -1179,7 +1243,7 @@
     state.flash = Math.max(state.flash, 0.3);
     state.ripples.push({ x: origin.x, y: origin.y, radius: 22, age: 0, life: 0.56, color: bombTone.light, power: 1.45 });
     state.ripples.push({ x: origin.x, y: origin.y, radius: 38, age: 0, life: 0.42, color: "#ffffff", power: 0.85 });
-    for (let i = 0; i < 42; i += 1) {
+    for (let i = 0; i < 24; i += 1) {
       makeParticle(origin.x, origin.y, i % 2 === 0 ? bombTone.light : whiteTone.light, rand(120, 340), rand(0, Math.PI * 2), rand(0.3, 0.72), i % 5 === 0);
     }
   }
@@ -1214,13 +1278,16 @@
       color: color.light,
       power: 0.72,
     });
-    for (let i = 0; i < 5; i += 1) {
+    for (let i = 0; i < 3; i += 1) {
       makeParticle(bubble.x, bubble.y, color.light, rand(70, 190), rand(0, Math.PI * 2), rand(0.18, 0.38), i === 0);
     }
     playPop(popSoundKindForBubble(bubble), rand(0, 0.045));
   }
 
   function makeParticle(x, y, color, speed, angle, life, sparkle = false) {
+    if (state.particles.length >= maxParticles) {
+      state.particles.splice(0, state.particles.length - maxParticles + 1);
+    }
     state.particles.push({
       x,
       y,
@@ -1236,6 +1303,9 @@
   }
 
   function makeFloatText(x, y, text, color, scale = 1) {
+    if (state.floaters.length >= maxFloaters) {
+      state.floaters.splice(0, state.floaters.length - maxFloaters + 1);
+    }
     state.floaters.push({
       x,
       y,
@@ -1836,7 +1906,7 @@
   }
 
   function drawBackgroundBoundary(time, d) {
-    const gap = Math.max(16, state.height / 42);
+    const gap = Math.max(22, state.height / 32);
     const highFlow = highFlowAmount();
     let previousX = null;
     ctx.save();
@@ -1870,8 +1940,8 @@
     const flowTime = backgroundMotionTime(time);
     const d = difficulty();
     const openAmount = state.openUntil > state.elapsed ? 0.16 : 0;
-    const rowHeight = 3;
-    const stops = 16;
+    const rowHeight = 6;
+    const stops = 10;
 
     for (let y = 0; y < state.height; y += rowHeight) {
       const bandY = y + rowHeight * 0.5;
@@ -2097,8 +2167,8 @@
       bubble.skinRotation +
       Math.sin(bubble.wobble * 0.54 + bubble.skinPhase) * 0.16 +
       bubble.age * bubble.skinSpin * 0.07;
-    const points = bubble.isStream ? 14 : 18;
-    const wobbleAmount = bubble.isStream ? 0.045 : 0.075;
+    const points = bubble.isStream ? 10 : 14;
+    const wobbleAmount = bubble.isStream ? 0.04 : 0.068;
 
     const traceShape = (scale = 1) => {
       ctx.beginPath();
@@ -2578,12 +2648,37 @@
   }
 
   function loop(now) {
-    const dt = Math.min(0.033, Math.max(0, (now - state.lastTime) / 1000 || 0));
+    frameRequest = 0;
+    if (document.hidden || !state.running) {
+      updatePerfDebug(now, true);
+      return;
+    }
+
+    if (lastFrameTime && now - lastFrameTime < targetFrameMs) {
+      scheduleLoop();
+      return;
+    }
+
+    const elapsed = lastFrameTime ? now - lastFrameTime : targetFrameMs;
+    const dt = Math.min(0.05, Math.max(0, elapsed / 1000 || targetFrameMs / 1000));
+    lastFrameTime = now;
     state.lastTime = now;
     state.visualTime += dt * 1000;
     update(dt);
-    draw();
-    requestAnimationFrame(loop);
+    trimRuntimeEffects();
+    if (state.running) {
+      draw();
+    }
+
+    perfFrames += 1;
+    if (!perfLastTime) perfLastTime = now;
+    if (now - perfLastTime >= 1000) {
+      perfFps = (perfFrames * 1000) / (now - perfLastTime);
+      perfFrames = 0;
+      perfLastTime = now;
+    }
+    updatePerfDebug(now);
+    scheduleLoop();
   }
 
   function playPop(kind = "large", delayOffset = 0) {
@@ -2717,7 +2812,7 @@
     startTransition.append(ring);
 
     const spread = Math.max(state.width || window.innerWidth, state.height || window.innerHeight);
-    const count = Math.round(clamp(spread / 13, 52, 72));
+    const count = Math.round(clamp(spread / 20, 28, 42));
     for (let i = 0; i < count; i += 1) {
       const bubble = document.createElement("span");
       const angle = (i / count) * Math.PI * 2 + rand(-0.2, 0.2);
@@ -2771,14 +2866,39 @@
   canvas.addEventListener("pointermove", handlePointerMove, { passive: false });
   canvas.addEventListener("pointerup", handlePointerEnd);
   canvas.addEventListener("pointercancel", handlePointerEnd);
-  window.addEventListener("resize", resize);
-  window.addEventListener("orientationchange", resize);
+  window.addEventListener("resize", () => {
+    resize();
+    if (!state.running) {
+      draw();
+      updatePerfDebug(performance.now(), true);
+    }
+  });
+  window.addEventListener("orientationchange", () => {
+    resize();
+    if (!state.running) {
+      draw();
+      updatePerfDebug(performance.now(), true);
+    }
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      if (frameRequest) {
+        cancelAnimationFrame(frameRequest);
+        frameRequest = 0;
+      }
+      return;
+    }
+    lastFrameTime = performance.now();
+    if (state.running) {
+      scheduleLoop();
+    } else {
+      draw();
+      updatePerfDebug(lastFrameTime, true);
+    }
+  });
 
   resize();
   updateHud();
   draw();
-  requestAnimationFrame((now) => {
-    state.lastTime = now;
-    requestAnimationFrame(loop);
-  });
+  updatePerfDebug(performance.now(), true);
 })();

@@ -172,11 +172,10 @@ body {
     linear-gradient(180deg, rgba(24, 60, 78, 0.16), rgba(24, 60, 78, 0.28));
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.28),
-    0 8px 18px rgba(16, 48, 71, 0.16);
+    0 4px 10px rgba(16, 48, 71, 0.12);
   font: inherit;
   pointer-events: auto;
   opacity: 0.56;
-  backdrop-filter: blur(8px);
   overflow: hidden;
 }
 
@@ -184,8 +183,8 @@ body {
   opacity: 0.9;
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.36),
-    0 0 16px rgba(213, 233, 238, 0.28),
-    0 8px 18px rgba(16, 48, 71, 0.16);
+    0 0 10px rgba(213, 233, 238, 0.18),
+    0 4px 10px rgba(16, 48, 71, 0.12);
 }
 
 .clear-skill:disabled {
@@ -218,7 +217,7 @@ body {
     rgba(13, 40, 58, 0.18);
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.2),
-    0 5px 14px rgba(17, 57, 85, 0.12);
+    0 3px 8px rgba(17, 57, 85, 0.08);
 }
 
 .water-meter::after {
@@ -247,7 +246,7 @@ body {
     linear-gradient(90deg, #d5e9ee, #c5c2d0 54%, #d9a2b2);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.42),
-    0 0 10px rgba(213, 233, 238, 0.18);
+    0 0 6px rgba(213, 233, 238, 0.12);
   transition: width 180ms ease;
 }
 
@@ -425,11 +424,11 @@ body {
   animation: water-kick 300ms cubic-bezier(0.16, 1.35, 0.32, 1);
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.3),
-    0 0 16px rgba(213, 233, 238, 0.32);
+    0 0 9px rgba(213, 233, 238, 0.2);
 }
 
 .water-block.combo-hot .water-meter span {
-  filter: brightness(1.08);
+  opacity: 0.96;
 }
 
 .water-block.open .water-meter span {
@@ -445,7 +444,7 @@ body {
 .water-block.low .water-meter {
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.28),
-    0 0 16px rgba(217, 162, 178, 0.3);
+    0 0 9px rgba(217, 162, 178, 0.2);
 }
 
 .curtain {
@@ -461,7 +460,6 @@ body {
   background:
     linear-gradient(180deg, rgba(21, 91, 134, 0.18), rgba(10, 27, 48, 0.42)),
     rgba(14, 49, 75, 0.12);
-  backdrop-filter: blur(4px);
   transition:
     opacity 240ms ease,
     visibility 240ms ease;
@@ -560,6 +558,22 @@ body {
   opacity: 0;
 }
 
+.perf-debug {
+  position: absolute;
+  z-index: 6;
+  right: 8px;
+  bottom: calc(8px + var(--safe-bottom));
+  padding: 3px 6px;
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(12, 38, 58, 0.16);
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.2;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
 .start-transition::before {
   position: absolute;
   inset: -18%;
@@ -656,7 +670,6 @@ body {
   to {
     opacity: 0;
     transform: translateY(12px) scale(0.98);
-    filter: blur(3px);
   }
 }
 
