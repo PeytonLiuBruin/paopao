@@ -57,19 +57,20 @@ body {
 .hud {
   position: absolute;
   z-index: 3;
-  top: calc(10px + var(--safe-top));
-  left: 12px;
-  right: 12px;
-  display: grid;
-  grid-template-columns: minmax(150px, 0.48fr) minmax(56px, 1fr) minmax(72px, 0.28fr);
+  top: calc(6px + var(--safe-top));
+  left: 6px;
+  right: 7px;
+  display: block;
   align-items: start;
-  gap: 10px;
   pointer-events: none;
 }
 
 .difficulty-level {
-  grid-column: 2;
-  justify-self: center;
+  position: absolute;
+  top: 0;
+  right: 0;
+  transform: none;
+  z-index: 2;
   padding: 2px 7px;
   border-radius: 999px;
   color: rgba(255, 255, 255, 0.9);
@@ -96,38 +97,71 @@ body {
 }
 
 .water-block {
-  grid-column: 1;
-  grid-row: 1;
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
   gap: 3px;
-  width: clamp(150px, 39vw, 220px);
+  width: min(44vw, 238px);
   padding: 0;
   opacity: 0.82;
+  grid-template-columns: minmax(112px, 1fr) minmax(54px, auto);
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 8px;
   transition:
     opacity 160ms ease,
     transform 160ms ease;
 }
 
 .water-topline {
+  grid-column: 2;
+  grid-row: 1;
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 5px;
+  gap: 0;
+}
+
+.water-block .caption {
+  display: none;
 }
 
 .water-value {
-  font-size: 24px;
+  display: inline-block;
+  color: rgba(255, 255, 255, 0.98);
+  font-family: "Arial Rounded MT Bold", "Nunito", "Baloo 2", "PingFang SC", "Microsoft YaHei UI", ui-rounded, sans-serif;
+  font-size: clamp(22px, 5vw, 26px);
   line-height: 1;
   font-weight: 1000;
   font-variant-numeric: tabular-nums;
-  -webkit-text-stroke: 1.6px rgba(15, 33, 43, 0.68);
+  letter-spacing: 0;
+  -webkit-text-stroke: 1.45px rgba(15, 33, 43, 0.62);
+  text-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.38),
+    0 2px 5px rgba(15, 33, 43, 0.36);
+  transform-origin: left bottom;
 }
 
 .score-block.right {
-  grid-column: 3;
-  grid-row: 1;
+  position: absolute;
+  top: 17px;
+  right: 0;
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  align-items: start;
   justify-items: end;
-  gap: 2px;
+  column-gap: 4px;
+  row-gap: 0;
+}
+
+.score-block.right .caption {
+  display: none;
+}
+
+.score-block.right strong {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .caption {
@@ -139,7 +173,7 @@ body {
 }
 
 .score-block strong {
-  font-size: 30px;
+  font-size: clamp(24px, 6vw, 30px);
   line-height: 1;
   font-weight: 1000;
   font-variant-numeric: tabular-nums;
@@ -147,6 +181,9 @@ body {
 }
 
 .time-pill {
+  grid-column: 1;
+  grid-row: 2;
+  justify-self: end;
   margin-top: -1px;
   padding: 1px 6px;
   border-radius: 999px;
@@ -220,51 +257,87 @@ body {
 }
 
 .water-meter {
+  grid-column: 1;
+  grid-row: 1;
   position: relative;
   width: 100%;
-  height: 12px;
-  overflow: hidden;
+  height: clamp(18px, 3.2vw, 23px);
+  overflow: visible;
   border-radius: 999px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.02)),
-    rgba(13, 40, 58, 0.18);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.2),
-    0 3px 8px rgba(17, 57, 85, 0.08);
+  background: rgba(15, 46, 68, 0.13);
+  box-shadow: 0 2px 7px rgba(17, 57, 85, 0.08);
+  isolation: isolate;
+  transform-origin: left center;
+}
+
+.water-meter::before,
+.water-meter::after {
+  position: absolute;
+  content: "";
+  pointer-events: none;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+}
+
+.water-meter::before {
+  z-index: 4;
+  inset: -5px -8px;
+  background-image: url("./assets/waterbar-frame.png");
+  opacity: 0.88;
 }
 
 .water-meter::after {
-  position: absolute;
-  inset: 0;
-  content: "";
-  background: repeating-linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0.16) 0,
-    rgba(255, 255, 255, 0.16) 1px,
-    transparent 1px,
-    transparent 10%
-  );
-  opacity: 0.24;
+  z-index: 5;
+  inset: -5px -8px;
+  background-image: url("./assets/waterbar-glass.png");
+  opacity: 0.72;
 }
 
 .water-meter span {
-  position: relative;
-  z-index: 1;
+  position: absolute;
+  z-index: 2;
+  left: 2px;
+  top: 2px;
   display: block;
   width: 76%;
-  height: 100%;
+  height: calc(100% - 4px);
+  overflow: hidden;
   border-radius: inherit;
-  background:
-    radial-gradient(circle at 18% 24%, rgba(255, 255, 255, 0.82), transparent 24%),
-    linear-gradient(90deg, #d5e9ee, #c5c2d0 54%, #d9a2b2);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.42),
-    0 0 6px rgba(213, 233, 238, 0.12);
-  transition: width 180ms ease;
+  background: rgba(35, 213, 236, 0.32);
+  box-shadow: 0 0 8px rgba(102, 229, 246, 0.18);
+  transition: width 260ms cubic-bezier(0.2, 0.86, 0.26, 1);
+  transform-origin: left center;
+}
+
+.water-meter span::before,
+.water-meter span::after {
+  position: absolute;
+  inset: -8px -14px;
+  width: max(220px, 112%);
+  content: "";
+  pointer-events: none;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+}
+
+.water-meter span::before {
+  z-index: 1;
+  background-image: url("./assets/waterbar-fill.png");
+  animation: water-drift 3.8s ease-in-out infinite;
+}
+
+.water-meter span::after {
+  z-index: 2;
+  background-image: url("./assets/waterbar-foam.png");
+  opacity: 0.86;
+  animation: water-surface-drift 2.9s ease-in-out infinite;
 }
 
 .combo-chip {
   --combo-left: 0;
+  grid-column: 1 / span 2;
+  grid-row: 2;
+  justify-self: start;
   position: relative;
   min-height: 19px;
   opacity: 0;
@@ -437,9 +510,7 @@ body {
 
 .water-block.pulse .water-meter {
   animation: water-kick 300ms cubic-bezier(0.16, 1.35, 0.32, 1);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.3),
-    0 0 9px rgba(213, 233, 238, 0.2);
+  box-shadow: 0 0 10px rgba(102, 229, 246, 0.22);
 }
 
 .water-block.combo-hot .water-meter span {
@@ -447,9 +518,32 @@ body {
 }
 
 .water-block.open .water-meter span {
-  background:
-    radial-gradient(circle at 18% 24%, rgba(255, 255, 255, 0.82), transparent 24%),
-    linear-gradient(90deg, #d5e9ee, #efe4be 56%, #d9a2b2);
+  box-shadow: 0 0 10px rgba(239, 228, 190, 0.18);
+}
+
+.water-block.gain .water-meter span {
+  animation: water-fill-pop 360ms cubic-bezier(0.16, 1.18, 0.32, 1);
+}
+
+.water-block.gain .water-value,
+.water-block.pulse .water-value {
+  animation: percent-bounce 360ms cubic-bezier(0.16, 1.28, 0.32, 1);
+}
+
+.water-block.gain .water-meter span::after {
+  opacity: 1;
+  animation:
+    water-surface-drift 2.9s ease-in-out infinite,
+    water-splash-line 420ms ease-out;
+}
+
+.water-block.drain .water-meter span::before {
+  animation-duration: 2.6s;
+}
+
+.water-block.drain .water-meter span::after {
+  opacity: 0.7;
+  animation-duration: 2.1s;
 }
 
 .water-block.low .water-value {
@@ -761,6 +855,83 @@ body {
   }
 }
 
+@keyframes water-drift {
+  0% {
+    transform: translateX(-6px) translateY(0) scaleY(1);
+  }
+
+  50% {
+    transform: translateX(4px) translateY(-1px) scaleY(1.04);
+  }
+
+  100% {
+    transform: translateX(-6px) translateY(0) scaleY(1);
+  }
+}
+
+@keyframes water-surface-drift {
+  0% {
+    transform: translateX(-10px) translateY(0);
+  }
+
+  50% {
+    transform: translateX(8px) translateY(-1px);
+  }
+
+  100% {
+    transform: translateX(-10px) translateY(0);
+  }
+}
+
+@keyframes water-fill-pop {
+  0% {
+    transform: scaleX(1) scaleY(1);
+  }
+
+  42% {
+    transform: scaleX(1.035) scaleY(1.22) translateY(-1px);
+  }
+
+  100% {
+    transform: scaleX(1) scaleY(1);
+  }
+}
+
+@keyframes percent-bounce {
+  0% {
+    transform: scale(1);
+  }
+
+  38% {
+    transform: scale(1.12, 0.92) translateY(1px);
+  }
+
+  62% {
+    transform: scale(0.96, 1.08) translateY(-1px);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes water-splash-line {
+  0% {
+    transform: translateX(-18px) translateY(2px);
+    opacity: 0.62;
+  }
+
+  45% {
+    transform: translateX(4px) translateY(-3px);
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateX(12px) translateY(0);
+    opacity: 0.86;
+  }
+}
+
 @media (min-width: 700px) and (min-height: 760px) {
   .phone-shell {
     border-radius: 0;
@@ -772,17 +943,19 @@ body {
     top: calc(8px + var(--safe-top));
     left: 9px;
     right: 9px;
-    grid-template-columns: minmax(132px, 0.5fr) minmax(42px, 1fr) minmax(62px, 0.28fr);
-    gap: 7px;
   }
 
   .water-block {
-    width: clamp(132px, 40vw, 168px);
+    width: min(42vw, 184px);
+    column-gap: 6px;
   }
 
-  .water-value,
   .score-block strong {
     font-size: 22px;
+  }
+
+  .water-value {
+    font-size: clamp(20px, 5.4vw, 24px);
   }
 
   .caption,

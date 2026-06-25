@@ -3,7 +3,7 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false });
-  const buildVersion = "v2026.06.25-nodebug";
+  const buildVersion = "v2026.06.25-hudright";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -26,6 +26,8 @@
   bubbleAtlas.src = "./assets/bubble-atlas.png";
   const bombBubbleImage = new Image();
   bombBubbleImage.src = "./assets/bomb-bubble.png";
+  const bleachBubbleImage = new Image();
+  bleachBubbleImage.src = "./assets/bleach-bubble.png";
   const bubbleSpriteCell = 192;
   const bubbleSpriteCols = 5;
   const targetFrameMs = 1000 / 30;
@@ -65,6 +67,7 @@
   const comboMinWindow = 1450;
   const decolorDuration = 4200;
   const decolorWarningMs = 1500;
+  const fairMatchDwell = 2;
   const clearSkillMaxUses = 3;
   const edgeCycle = ["left", "right", "bottom", "top"];
   const spawnRegions = [
@@ -152,6 +155,9 @@
   let perfFps = 0;
   let perfLastTime = 0;
   let perfLastUpdate = 0;
+  let lastHudWater = null;
+  let waterGainUntil = 0;
+  let waterDrainUntil = 0;
 
   function resize() {
     const rect = canvas.getBoundingClientRect();
@@ -335,17 +341,24 @@
     if (deficit <= 0) return true;
 
     const deficitRatio = deficit / Math.max(1, plan.targetBubbles);
-    state.water = 0;
-    state.flash = Math.max(state.flash, 0.42 + deficitRatio * 0.28);
+    const levelPressure = clamp((displayDifficultyLevel() - 1) / 9, 0, 1);
+    const penalty = clamp(7 + deficitRatio * 24 + levelPressure * 8, 7, 34);
+    state.water = Math.max(0, state.water - penalty);
+    state.waterPressure = Math.min(waterPressureCap, state.waterPressure + penalty * (1.1 + levelPressure * 0.35));
+    waterDrainUntil = state.elapsed + 560;
+    state.flash = Math.max(state.flash, 0.24 + deficitRatio * 0.22);
     makeFloatText(
       state.width * 0.5,
       state.height * 0.42,
-      `Stage need ${plan.targetBubbles}/${plan.totalBubbles}`,
+      `正确率不足 -${Math.round(penalty)}%`,
       "#ffffff",
       0.9,
     );
-    endGame();
-    return false;
+    if (state.water <= 0) {
+      endGame();
+      return false;
+    }
+    return true;
   }
 
   function maybeAdvanceStage() {
@@ -364,32 +377,32 @@
   function backgroundTimingForLevel(level) {
     const p = clamp((level - 1) / 9, 0, 1);
     const earlyMotion = smoothstep(1, 5, level);
+    const lateMotion = smoothstep(6, 10, level);
     return {
-      hold: 14200 - p * 8200 - earlyMotion * 2600,
-      duration: 9800 - p * 2800,
+      hold: clamp(9000 - p * 5500 - earlyMotion * 2600 - lateMotion * 2400, 650, 9000),
+      duration: clamp(7600 - p * 2600 - earlyMotion * 600 - lateMotion * 2200, 2800, 7600),
     };
   }
 
   function makeBackgroundLayout(level, step = 0) {
     const p = clamp((level - 1) / 9, 0, 1);
-    const earlyMotion = 0.36 + smoothstep(1, 6, level) * 0.78;
-    const motion = clamp(earlyMotion, 0.32, 1.12);
-    const orbit = level >= 8 ? (step % 8) / 8 * Math.PI * 2 : step * 0.72;
-    const sign = Math.cos(orbit) >= 0 ? 1 : -1;
-    const mode = step % 6;
-    const splitAmp = level < 3 ? 0.038 : level < 5 ? 0.088 : level < 7 ? 0.13 : 0.158 + p * 0.052;
-    const tiltAmp = level < 3 ? 0.032 : level < 5 ? 0.074 : level < 7 ? 0.108 : 0.145;
-    const curveAmp = level < 3 ? 0.038 : level < 5 ? 0.064 : level < 7 ? 0.092 : 0.112 + p * 0.024;
-    const width = level < 4 ? 0.038 : clamp(0.046 + Math.sin(step * 0.72) * (0.008 + p * 0.014), 0.034, 0.078);
-    const splitWave = level >= 8 ? Math.cos(orbit) : sign * [0.32, 0.58, 0.9, 0.42, 0.74, 1][mode];
-    const tiltWave = level >= 8 ? Math.sin(orbit) : sign * [0.18, 0.35, 0.62, 0.95, 0.48, 0.78][mode];
-    const curveWave = level >= 8 ? Math.cos(orbit + Math.PI * 0.42) : [0.22, -0.36, 0.52, -0.75, 1, -0.58][mode];
+    const motion = 0.58 + smoothstep(1, 6, level) * 0.86;
+    const turn = smoothstep(1.5, 8.5, level);
+    const baseAngle = turn * Math.PI * 0.5;
+    const angleSway = (0.045 + smoothstep(2, 8, level) * 0.19) * Math.sin(step * 0.72);
+    const lateRoll = smoothstep(6, 10, level) * Math.sin(step * 0.37 + 0.8) * 0.2;
+    const mode = step % 8;
+    const splitAmp = level < 3 ? 0.06 : level < 5 ? 0.115 : level < 7 ? 0.155 : 0.19 + p * 0.045;
+    const curveAmp = level < 3 ? 0.045 : level < 5 ? 0.078 : level < 7 ? 0.112 : 0.14 + p * 0.02;
+    const width = level < 4 ? 0.032 : clamp(0.034 + Math.sin(step * 0.48) * (0.004 + p * 0.008), 0.026, 0.052);
+    const splitWave = [0.18, -0.34, 0.48, -0.28, 0.62, -0.46, 0.3, -0.2][mode];
+    const curveWave = [0.34, -0.28, 0.46, -0.58, 0.72, -0.42, 0.5, -0.32][mode];
     return {
       split: clamp(0.5 + splitAmp * splitWave * motion, 0.28, 0.72),
-      tilt: tiltAmp * tiltWave * motion,
+      angle: clamp(baseAngle + angleSway + lateRoll, -0.16, Math.PI * 0.5),
       curve: curveAmp * curveWave * motion,
-      phase: ((step * (level >= 7 ? 0.125 : 0.18)) % 1) + 0.08,
-      freq: 0.68 + (mode % 3) * 0.12 + p * 0.22,
+      phase: ((step * (level >= 7 ? 0.105 : 0.15)) % 1) + 0.08,
+      freq: 0.58 + (mode % 4) * 0.08 + p * 0.18,
       width,
     };
   }
@@ -397,7 +410,7 @@
   function mixBackgroundLayout(from, to, amount) {
     return {
       split: from.split + (to.split - from.split) * amount,
-      tilt: from.tilt + (to.tilt - from.tilt) * amount,
+      angle: (from.angle ?? 0) + ((to.angle ?? 0) - (from.angle ?? 0)) * amount,
       curve: from.curve + (to.curve - from.curve) * amount,
       phase: from.phase + (to.phase - from.phase) * amount,
       freq: from.freq + (to.freq - from.freq) * amount,
@@ -457,24 +470,40 @@
     return state.backgroundFlow.current;
   }
 
-  function backgroundBoundaryRatioAtY(y) {
-    const layout = backgroundLayoutAt();
-    const ny = state.height > 0 ? y / state.height : 0.5;
-    const centered = ny - 0.5;
+  function backgroundAxes(layout = backgroundLayoutAt()) {
+    const angle = layout.angle ?? 0;
+    return {
+      nx: Math.cos(angle),
+      ny: Math.sin(angle),
+      tx: -Math.sin(angle),
+      ty: Math.cos(angle),
+    };
+  }
+
+  function backgroundBoundaryOffsetAt(tangent, layout = backgroundLayoutAt(), time = state.visualTime) {
     const levelAmount = clamp((displayDifficultyLevel() - 1) / 9, 0, 1);
-    const curve = Math.sin((ny * layout.freq + layout.phase) * Math.PI * 2) * layout.curve;
-    const broad = Math.sin((ny * 0.46 + layout.phase * 0.7 + 0.16) * Math.PI * 2) * layout.curve * 0.46;
-    const breathe = Math.sin(state.visualTime / 26000) * (0.012 + levelAmount * 0.012);
-    const earlyRipple = Math.sin(ny * Math.PI * 1.35 + state.visualTime / 21000) * (0.015 + levelAmount * 0.01);
-    return clamp(layout.split + centered * layout.tilt + curve + broad + breathe + earlyRipple, 0.16, 0.84);
+    const u = tangent + 0.5;
+    const curve = Math.sin((u * layout.freq + layout.phase) * Math.PI * 2) * layout.curve;
+    const broad = Math.sin((u * 0.42 + layout.phase * 0.62 + 0.18) * Math.PI * 2) * layout.curve * 0.52;
+    const smallFlow = Math.sin(u * Math.PI * 2.1 + time / 36000) * (0.008 + levelAmount * 0.008);
+    const breathe = Math.sin(time / 26000) * (0.012 + levelAmount * 0.012);
+    return layout.split - 0.5 + curve + broad + smallFlow + breathe;
+  }
+
+  function backgroundSignedAt(x, y, time = state.visualTime) {
+    const layout = backgroundLayoutAt();
+    const axes = backgroundAxes(layout);
+    const px = state.width > 0 ? x / state.width - 0.5 : 0;
+    const py = state.height > 0 ? y / state.height - 0.5 : 0;
+    const tangent = px * axes.tx + py * axes.ty;
+    const normal = px * axes.nx + py * axes.ny;
+    return normal - backgroundBoundaryOffsetAt(tangent, layout, time);
   }
 
   function backgroundMixAt(x, y, time = state.visualTime) {
-    const nx = state.width > 0 ? x / state.width : 0.5;
     const layout = backgroundLayoutAt();
-    const boundary = backgroundBoundaryRatioAtY(y);
     const softness = layout.width;
-    return smoothstep(-softness, softness, nx - boundary);
+    return smoothstep(-softness, softness, backgroundSignedAt(x, y, time));
   }
 
   function backgroundColorIndexAt(x, y) {
@@ -728,13 +757,25 @@
 
   function updateHud() {
     const water = Math.round(Math.max(0, Math.min(100, state.water)));
+    const exactWater = Math.max(0, Math.min(100, state.water));
     const openActive = state.openUntil > state.elapsed && state.running;
+    if (lastHudWater !== null) {
+      const diff = exactWater - lastHudWater;
+      if (diff > 0.05) {
+        waterGainUntil = state.elapsed + 420;
+      } else if (diff < -0.012) {
+        waterDrainUntil = state.elapsed + 260;
+      }
+    }
+    lastHudWater = exactWater;
     waterFill.style.width = `${water}%`;
     waterValue.textContent = `${water}%`;
     waterBlock.classList.toggle("low", water <= 28);
     waterBlock.classList.toggle("pulse", state.comboPulse > 0.16);
     waterBlock.classList.toggle("open", openActive);
     waterBlock.classList.toggle("combo-hot", state.combo >= 5);
+    waterBlock.classList.toggle("gain", state.running && state.elapsed < waterGainUntil);
+    waterBlock.classList.toggle("drain", state.running && state.elapsed < waterDrainUntil && state.elapsed >= waterGainUntil);
     comboChip.style.setProperty("--combo-left", comboProgress().toFixed(3));
     const rank = comboRank();
     comboChip.dataset.rank = rank;
@@ -771,6 +812,9 @@
     state.score = 0;
     state.poppedCount = 0;
     state.water = 76;
+    lastHudWater = null;
+    waterGainUntil = 0;
+    waterDrainUntil = 0;
     state.waterPressure = 0;
     resetCombo();
     state.bestCombo = 0;
@@ -915,6 +959,10 @@
     if (bubble.isBomb) return 4.2;
     if (bubble.isWhite) return bubble.baseRadius <= 27 || bubble.isStream ? 1.4 : 2.2;
     return bubble.waterValue ?? (bubble.baseRadius <= 27 ? 3.7 : 5.35);
+  }
+
+  function isSpecialBubble(bubble) {
+    return Boolean(bubble && (bubble.isSuper || bubble.isClear || bubble.isBleach || bubble.isBomb));
   }
 
   function noteWaterOpportunity(bubble) {
@@ -1079,6 +1127,8 @@
       isWhite: Boolean(options.isWhite),
       whiteUntil: options.whiteUntil ?? 0,
       restoreState: null,
+      matchDwell: 0,
+      fairPassComplete: kind !== "normal",
       isStream: Boolean(options.isStream),
       streamPattern: options.streamPattern ?? "float",
       streamPhase: options.streamPhase ?? rand(0, Math.PI * 2),
@@ -1456,7 +1506,7 @@
   function spawnPointCrowded(x, y, radius, colorIndex) {
     for (let i = state.bubbles.length - 1; i >= 0; i -= 1) {
       const other = state.bubbles[i];
-      if (other.age < -0.4) continue;
+      if (other.age < -1) continue;
       const dx = x - other.x;
       const dy = y - other.y;
       const bigOrDifferent = radius >= 36 || other.baseRadius >= 36 || (colorIndex >= 0 && other.colorIndex >= 0 && colorIndex !== other.colorIndex);
@@ -1541,6 +1591,7 @@
       streamAmplitude: flow.type === "sGroup" ? rand(16, 28) : 0,
       streamFrequency: flow.type === "sGroup" ? rand(2.1, 3.0) : 3.6,
       quietHint: Boolean(options.quietHint),
+      delay: options.delay ?? 0,
     });
     if (spawned && sizeKind === "large") flow.usedLarge = true;
     return spawned;
@@ -1562,10 +1613,10 @@
     let spawned = 0;
     for (let i = 0; i < count; i += 1) {
       const pickedColor = sameColor ? colorIndex : pickBalancedColorIndex();
-      const lane = (i - (count - 1) / 2) * radius * rand(0.22, 0.36);
+      const lane = (i - (count - 1) / 2) * radius * rand(0.82, 1.05);
       const start = {
-        x: base.x + perp.x * lane - inward.x * i * radius * 0.16,
-        y: base.y + perp.y * lane - inward.y * i * radius * 0.16,
+        x: base.x + perp.x * lane - inward.x * i * radius * 0.72,
+        y: base.y + perp.y * lane - inward.y * i * radius * 0.72,
       };
       const target = {
         x: start.x + (inward.x + perp.x * fan) * state.width * rand(0.72, 1.08),
@@ -1587,7 +1638,7 @@
         streamAmplitude: 4 + d * 5,
         streamFrequency: 2.8 + d,
         streamPhase: i * 0.48,
-        delay: i * rand(0.065, 0.095),
+        delay: i * rand(0.11, 0.15),
         quietHint: true,
       });
       if (didSpawn) spawned += 1;
@@ -1622,8 +1673,8 @@
 
       for (let i = 0; i < sideCount; i += 1) {
         const colorIndex = stringColor ?? pickBalancedColorIndex();
-        const lane = (i - (sideCount - 1) / 2) * radius * rand(0.4, 0.62);
-        const forward = i * radius * rand(0.24, 0.38);
+        const lane = (i - (sideCount - 1) / 2) * radius * rand(0.78, 1.04);
+        const forward = i * radius * rand(0.58, 0.82);
         const start = {
           x: base.x + perp.x * lane - inward.x * forward,
           y: base.y + perp.y * lane - inward.y * forward,
@@ -1652,7 +1703,7 @@
           streamPhase: i * 0.34 + side * Math.PI,
           arcBend: curveSign * rand(36 + d * 8, 58 + d * 18),
           arcLife: rand(2.0, 2.8),
-          delay: i * rand(0.055, 0.082) + side * 0.055,
+          delay: i * rand(0.08, 0.12) + side * 0.07,
           quietHint: true,
         });
         if (didSpawn) spawned += 1;
@@ -1674,6 +1725,7 @@
         region,
         sizeKind: Math.random() < 0.65 ? "small" : "normal",
         colorIndex: colorIndex ?? pickBalancedColorIndex(),
+        delay: i * rand(0.075, 0.12),
         quietHint: i > 0,
       })) {
         spawned += 1;
@@ -1734,7 +1786,7 @@
     if (count <= 0) return;
 
     for (let index = 0; index < count; index += 1) {
-      spawnFlowBubble(flow, { quietHint: index > 0 });
+      spawnFlowBubble(flow, { delay: index * rand(0.075, 0.12), quietHint: index > 0 });
     }
     scheduleFlowSpawn(flow, count);
   }
@@ -1842,6 +1894,9 @@
     let changed = 0;
     state.bubbles.forEach((bubble) => {
       if (bubble.age < 0) {
+        return;
+      }
+      if (isSpecialBubble(bubble)) {
         return;
       }
       if (!bubble.restoreState) {
@@ -2242,27 +2297,73 @@
     return bubble.colorIndex === backgroundColorIndexAt(point.x, point.y);
   }
 
+  function bubbleHasMatchingPatch(bubble) {
+    if (!isStageTargetBubble(bubble)) return false;
+    const r = bubble.radius * 0.58;
+    const points = [
+      { x: bubble.x, y: bubble.y },
+      { x: bubble.x - r, y: bubble.y },
+      { x: bubble.x + r, y: bubble.y },
+      { x: bubble.x, y: bubble.y - r },
+      { x: bubble.x, y: bubble.y + r },
+    ];
+    return points.some((point) => {
+      if (point.x < 0 || point.x > state.width || point.y < 0 || point.y > state.height) return false;
+      return backgroundColorIndexAt(point.x, point.y) === bubble.colorIndex;
+    });
+  }
+
+  function updateBubbleMatchDwell(bubble, dt) {
+    if (!isStageTargetBubble(bubble)) return;
+    if (bubbleHasMatchingPatch(bubble)) {
+      bubble.wasReady = true;
+      bubble.matchDwell = Math.min(fairMatchDwell, (bubble.matchDwell ?? 0) + dt);
+      if (bubble.matchDwell >= fairMatchDwell) {
+        bubble.fairPassComplete = true;
+      }
+    }
+  }
+
+  function needsFairColorPass(bubble) {
+    return isStageTargetBubble(bubble) && !bubble.fairPassComplete;
+  }
+
   function steerBubbleTowardMatch(bubble, dt, d) {
     if (bubble.isSuper || bubble.isClear || bubble.isBleach || bubble.isBomb || bubble.isWhite || bubble.colorIndex < 0) return;
-    if (bubble.colorIndex === backgroundColorIndexAt(bubble.x, bubble.y)) {
-      bubble.wasReady = true;
+    const matchingNow = bubbleHasMatchingPatch(bubble);
+    if (matchingNow && !needsFairColorPass(bubble)) {
       return;
     }
 
-    const urgency = smoothstep(1.15, 4.1 - d * 1.25, bubble.age);
+    if (matchingNow) {
+      const speed = Math.hypot(bubble.vx, bubble.vy);
+      const maxComfortSpeed = bubble.isStream ? 92 + d * 18 : 58 + d * 20;
+      if (speed > maxComfortSpeed) {
+        const damp = Math.max(0.82, 1 - dt * 0.72);
+        bubble.vx *= damp;
+        bubble.vy *= damp;
+      }
+      return;
+    }
+
+    const urgency = needsFairColorPass(bubble)
+      ? smoothstep(0.28, 1.7 - d * 0.35, bubble.age)
+      : smoothstep(1.15, 4.1 - d * 1.25, bubble.age);
     if (urgency <= 0) return;
 
     const targetExpired = !bubble.steerTarget || bubble.age >= bubble.retargetAt;
     const targetInvalid = bubble.steerTarget && backgroundColorIndexAt(bubble.steerTarget.x, bubble.steerTarget.y) !== bubble.colorIndex;
     if (targetExpired || targetInvalid) {
       bubble.steerTarget = matchingPointForColorFromEdge(bubble.colorIndex, bubble.edge, bubble.y, bubble.x);
-      bubble.retargetAt = bubble.age + rand(1.1, 2.0);
+      bubble.retargetAt = bubble.age + (needsFairColorPass(bubble) ? rand(0.55, 1.05) : rand(1.1, 2.0));
     }
 
     const target = bubble.steerTarget;
     const speed = Math.max(28, Math.hypot(bubble.vx, bubble.vy));
     const desired = aimedVelocity(bubble.x, bubble.y, target, speed, 0);
-    const correction = Math.min(0.038, dt * (0.22 + urgency * 0.92));
+    const correction = needsFairColorPass(bubble)
+      ? Math.min(0.11, dt * (0.75 + urgency * 2.4))
+      : Math.min(0.038, dt * (0.22 + urgency * 0.92));
     bubble.vx += (desired.vx - bubble.vx) * correction;
     bubble.vy += (desired.vy - bubble.vy) * correction;
   }
@@ -2288,6 +2389,30 @@
     const targetVy = direction.y * minSpeed + direction.x * side;
     bubble.vx += (targetVx - bubble.vx) * 0.18;
     bubble.vy += (targetVy - bubble.vy) * 0.18;
+  }
+
+  function pullBubbleBackForFairPass(bubble, d, dt) {
+    if (!needsFairColorPass(bubble)) return false;
+    const margin = bubble.radius * 1.35;
+    const nearExit =
+      bubble.x < margin ||
+      bubble.x > state.width - margin ||
+      bubble.y < margin ||
+      bubble.y > state.height - margin;
+    if (!nearExit) return false;
+
+    const targetInvalid = !bubble.steerTarget || backgroundColorIndexAt(bubble.steerTarget.x, bubble.steerTarget.y) !== bubble.colorIndex;
+    if (targetInvalid) {
+      bubble.steerTarget = matchingPointForColorFromEdge(bubble.colorIndex, bubble.edge, bubble.y, bubble.x);
+      bubble.retargetAt = bubble.age + rand(0.45, 0.9);
+    }
+
+    const speed = Math.max(bubble.isStream ? 88 + d * 24 : 62 + d * 24, Math.hypot(bubble.vx, bubble.vy));
+    const desired = aimedVelocity(bubble.x, bubble.y, bubble.steerTarget, speed, 0);
+    const correction = Math.min(0.2, dt * (1.8 + d * 1.2));
+    bubble.vx += (desired.vx - bubble.vx) * correction;
+    bubble.vy += (desired.vy - bubble.vy) * correction;
+    return true;
   }
 
   function separateBubbleFromNeighbors(bubble, index, d, dt) {
@@ -2424,6 +2549,7 @@
         restoreDecoloredBubble(bubble);
       }
       bubble.wobble += bubble.wobbleSpeed * dt;
+      updateBubbleMatchDwell(bubble, dt);
       steerBubbleTowardMatch(bubble, dt, d);
       keepBubbleMoving(bubble, d);
       separateBubbleFromNeighbors(bubble, i, d, dt);
@@ -2464,6 +2590,11 @@
         bubble.y < -bubble.radius * 2 ||
         bubble.y > state.height + bubble.radius * 2;
 
+      pullBubbleBackForFairPass(bubble, d, dt);
+      if (outside && needsFairColorPass(bubble)) {
+        continue;
+      }
+
       if (outside && (bubble.hasEntered || bubble.age > 4.5)) {
         penalizeStageMistake(bubble, "miss");
         state.bubbles.splice(i, 1);
@@ -2478,7 +2609,7 @@
       if (!blast.decorative) {
         for (let j = state.bubbles.length - 1; j >= 0; j -= 1) {
           const bubble = state.bubbles[j];
-          if (bubble.age < 0) {
+          if (bubble.age < 0 || isSpecialBubble(bubble)) {
             continue;
           }
           const dx = bubble.x - blast.x;
@@ -2544,7 +2675,21 @@
   }
 
   function backgroundBoundaryGuideX(y, time) {
-    return backgroundBoundaryRatioAtY(y, time) * state.width;
+    if (!state.width) return 0;
+    let bestX = state.width * 0.5;
+    let bestDistance = Infinity;
+    const samples = 34;
+    const left = -state.width * 0.18;
+    const right = state.width * 1.18;
+    for (let i = 0; i <= samples; i += 1) {
+      const x = left + ((right - left) * i) / samples;
+      const distance = Math.abs(backgroundSignedAt(x, y, time));
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestX = x;
+      }
+    }
+    return bestX;
   }
 
   function backgroundBoundaryXAtY(y, time, preferredX = null) {
@@ -2552,10 +2697,20 @@
   }
 
   function backgroundBoundaryPoints(time) {
-    const gap = Math.max(12, state.height / 64);
+    const layout = backgroundLayoutAt();
+    const axes = backgroundAxes(layout);
+    const steps = 72;
+    const span = 1.12;
     const points = [];
-    for (let y = -gap; y <= state.height + gap + 0.1; y += gap) {
-      points.push({ x: backgroundBoundaryXAtY(y, time), y });
+    for (let i = 0; i <= steps; i += 1) {
+      const tangent = -span + (span * 2 * i) / steps;
+      const normal = backgroundBoundaryOffsetAt(tangent, layout, time);
+      const px = axes.tx * tangent + axes.nx * normal;
+      const py = axes.ty * tangent + axes.ny * normal;
+      points.push({
+        x: (px + 0.5) * state.width,
+        y: (py + 0.5) * state.height,
+      });
     }
     return points;
   }
@@ -2598,9 +2753,10 @@
     const d = difficulty();
     const openAmount = state.openUntil > state.elapsed ? 0.16 : 0;
     const points = backgroundBoundaryPoints(time);
+    const axes = backgroundAxes();
     const blue = mixHex(backgroundPalette[0].color, openTone.light, openAmount * 0.08);
     const pink = mixHex(backgroundPalette[1].color, openTone.light, openAmount * 0.08);
-    const pad = Math.max(24, state.width * 0.08);
+    const far = 2.2;
 
     ctx.fillStyle = pink;
     ctx.fillRect(0, 0, state.width, state.height);
@@ -2608,8 +2764,10 @@
     ctx.save();
     ctx.beginPath();
     traceBackgroundBoundary(points);
-    ctx.lineTo(-pad, state.height + pad);
-    ctx.lineTo(-pad, -pad);
+    const last = points[points.length - 1];
+    const first = points[0];
+    ctx.lineTo(last.x - axes.nx * state.width * far, last.y - axes.ny * state.height * far);
+    ctx.lineTo(first.x - axes.nx * state.width * far, first.y - axes.ny * state.height * far);
     ctx.closePath();
     ctx.fillStyle = blue;
     ctx.fill();
@@ -2857,6 +3015,21 @@
     return true;
   }
 
+  function drawBleachTexture(bubble, x, y, r, alpha = 1) {
+    if (!bleachBubbleImage.complete || bleachBubbleImage.naturalWidth <= 0) return false;
+    const drawSize = r * 2.38;
+    const pulse = Math.sin(bubble.age * 2.1 + bubble.skinPhase) * 0.018;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.sin(bubble.wobble * 0.7 + bubble.skinPhase) * 0.045 + bubble.spin * 0.018);
+    ctx.scale(1 + pulse, 1 - pulse * 0.6);
+    ctx.globalAlpha *= alpha;
+    ctx.drawImage(bleachBubbleImage, -drawSize * 0.5, -drawSize * 0.5, drawSize, drawSize);
+    ctx.restore();
+    return true;
+  }
+
   function drawBubble(bubble) {
     if (bubble.age < 0) {
       return;
@@ -2948,7 +3121,8 @@
     }
 
     const bombTextured = bubble.isBomb && drawBombTexture(bubble, x, y, r, whiteAlpha);
-    if (!bombTextured) {
+    const bleachTextured = !bombTextured && bubble.isBleach && drawBleachTexture(bubble, x, y, r, whiteAlpha);
+    if (!bombTextured && !bleachTextured) {
       if (!drawBubbleSpriteBody(bubble, color, x, y, r, whiteAlpha)) {
         drawProceduralBubbleBody(body, color, x, y, r);
       }
@@ -2956,7 +3130,7 @@
 
     if (bubble.isBomb && !bombTextured) {
       drawBombMark(x, y, r);
-    } else if (bubble.isBleach) {
+    } else if (bubble.isBleach && !bleachTextured) {
       drawBleachMark(x, y, r);
     } else if (bubble.isClear) {
       drawClearMark(x, y, r);
