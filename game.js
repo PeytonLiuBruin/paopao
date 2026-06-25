@@ -3,6 +3,7 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false });
+  const buildVersion = "v2026.06.25-nodebug";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -18,8 +19,13 @@
   const clearSkillButton = document.getElementById("clearSkill");
   const clearSkillValue = document.getElementById("clearSkillValue");
   const perfDebug = document.getElementById("perfDebug");
+  const debugLevelSelect = document.getElementById("debugLevel");
+  const debugJumpButton = document.getElementById("debugJump");
+  const debugStageInfo = document.getElementById("debugStageInfo");
   const bubbleAtlas = new Image();
   bubbleAtlas.src = "./assets/bubble-atlas.png";
+  const bombBubbleImage = new Image();
+  bombBubbleImage.src = "./assets/bomb-bubble.png";
   const bubbleSpriteCell = 192;
   const bubbleSpriteCols = 5;
   const targetFrameMs = 1000 / 30;
@@ -38,14 +44,15 @@
     { count: 100, total: 150 },
     { count: 150, total: 120 },
   ];
+  const stageDurationMs = 20000;
 
   const palette = [
     { name: "湖雾蓝", color: "#6eafc0", deep: "#3f7f91", light: "#cbe8ef" },
     { name: "雾玫粉", color: "#d8899d", deep: "#a05f73", light: "#f0c7d3" },
   ];
   const backgroundPalette = [
-    { color: "#c5dde3", deep: "#9bc4cd", light: "#e8f4f6" },
-    { color: "#e8c8d1", deep: "#d2a6b4", light: "#f8e5eb" },
+    { color: "#8fcbd4", deep: "#62aeba", light: "#d8f0f3" },
+    { color: "#ee9fac", deep: "#d88798", light: "#f7c9d0" },
   ];
 
   const openTone = makeOpenTone();
@@ -60,6 +67,18 @@
   const decolorWarningMs = 1500;
   const clearSkillMaxUses = 3;
   const edgeCycle = ["left", "right", "bottom", "top"];
+  const spawnRegions = [
+    { edge: "left", min: 0.14, max: 0.38, aimX: 0.68, aimY: 0.32 },
+    { edge: "left", min: 0.36, max: 0.64, aimX: 0.68, aimY: 0.5 },
+    { edge: "left", min: 0.62, max: 0.86, aimX: 0.66, aimY: 0.68 },
+    { edge: "right", min: 0.14, max: 0.38, aimX: 0.32, aimY: 0.32 },
+    { edge: "right", min: 0.36, max: 0.64, aimX: 0.32, aimY: 0.5 },
+    { edge: "right", min: 0.62, max: 0.86, aimX: 0.34, aimY: 0.68 },
+    { edge: "top", min: 0.18, max: 0.42, aimX: 0.36, aimY: 0.7 },
+    { edge: "top", min: 0.44, max: 0.72, aimX: 0.58, aimY: 0.7 },
+    { edge: "bottom", min: 0.18, max: 0.42, aimX: 0.36, aimY: 0.3 },
+    { edge: "bottom", min: 0.44, max: 0.72, aimX: 0.58, aimY: 0.3 },
+  ];
   const state = {
     width: 0,
     height: 0,
@@ -81,6 +100,14 @@
     waterRoundIndex: 0,
     waterRoundSpawned: 0,
     waterOpportunityCount: 0,
+    stagePlan: null,
+    stageLevel: 1,
+    stageStartAt: 0,
+    stageSpawned: 0,
+    stageTargetSpawned: 0,
+    stageCorrectPops: 0,
+    stageMissedTargets: 0,
+    stageWrongPops: 0,
     bombComboProgress: 0,
     bombComboTarget: 18,
     bombSpawnCursor: 0,
@@ -89,7 +116,7 @@
     openPopCount: 0,
     colorCursor: 0,
     edgeCursor: 0,
-    nextPowerAt: 9500,
+    nextPowerAt: 22000,
     nextStreamAt: 18000,
     nextSpawnAt: 0,
     openUntil: 0,
@@ -100,6 +127,18 @@
     blasts: [],
     floaters: [],
     hints: [],
+    spawnFlow: null,
+    spawnFlowIndex: 0,
+    backgroundFlow: {
+      phase: "hold",
+      elapsed: 0,
+      step: 0,
+      current: null,
+      from: null,
+      target: null,
+      hold: 14000,
+      duration: 9000,
+    },
     activePointerId: null,
     lastSwipeX: 0,
     lastSwipeY: 0,
@@ -197,123 +236,245 @@
     frameRequest = requestAnimationFrame(loop);
   }
 
-  function backgroundMotionTime(time = state.visualTime) {
-    const d = difficulty();
-    const highDifficulty = smoothstep(0.55, 1, d);
-    const lateFlow = smoothstep(96, 196, state.elapsed / 1000);
-    return time * (1 + highDifficulty * 0.16 + lateFlow * 0.14);
-  }
-
-  function backgroundBoundaryForY(y, time = state.visualTime) {
-    const flowTime = backgroundMotionTime(time);
-    const ny = state.height > 0 ? y / state.height : 0.5;
-    return (
-      0.5 +
-      Math.sin(flowTime / 28000) * 0.07 +
-      Math.sin(ny * Math.PI * 1.25 + flowTime / 22000) * 0.075 +
-      Math.sin(ny * Math.PI * 2.35 - flowTime / 36000) * 0.018
-    );
-  }
-
   function displayDifficultyLevel() {
-    return Math.min(5, Math.floor(state.elapsed / 20000) + 1);
+    return Math.max(1, state.stageLevel || 1);
   }
 
-  function backgroundFlowStage() {
-    const seconds = state.elapsed / 1000;
-    return Math.min(
-      4,
-      smoothstep(40, 58, seconds) +
-        smoothstep(80, 104, seconds) +
-        smoothstep(120, 150, seconds) +
-        smoothstep(160, 196, seconds),
-    );
+  function targetCorrectRateForLevel(level) {
+    return clamp(0.5 + (level - 1) * 0.05, 0.5, 0.88);
   }
 
-  function highFlowAmount() {
-    return smoothstep(66, 126, state.elapsed / 1000);
+  function bubbleCountForLevel(level) {
+    const budget = waterBudgetRounds[Math.min(level - 1, waterBudgetRounds.length - 1)];
+    if (level <= waterBudgetRounds.length) return budget.count;
+    const extra = level - waterBudgetRounds.length;
+    return Math.round(budget.count + extra * 18);
   }
 
-  function rotatedBackgroundPoint(nx, ny, time = state.visualTime) {
-    const stage = backgroundFlowStage();
-    if (stage <= 0) return { x: nx, y: ny };
-    const flowTime = backgroundMotionTime(time);
-    const cx = nx - 0.5;
-    const cy = ny - 0.5;
-    const seconds = state.elapsed / 1000;
-    const highFlow = highFlowAmount();
-    const slowRotation = (flowTime / (184000 - stage * 12000)) * (0.45 + stage * 0.08);
-    const fullTurn = highFlow * Math.max(0, seconds - 66) * ((Math.PI * 2) / 188);
-    const angle = slowRotation + fullTurn;
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
+  function levelWaterDrainRate(level) {
+    const p = clamp((level - 1) / 9, 0, 1);
+    return 0.18 + p * 0.42 + smoothstep(4, 9, level) * 0.18;
+  }
+
+  function stageWaterBudgetForLevel(level) {
+    const targetBubbles = Math.max(1, Math.round(bubbleCountForLevel(level) * targetCorrectRateForLevel(level)));
+    const sustain = level <= 3 ? 1.5 : level <= 6 ? 1.35 : 1.22;
+    const perTargetFloor = level <= 2 ? 0.26 : level <= 5 ? 0.16 : 0.09;
+    return levelWaterDrainRate(level) * (stageDurationMs / 1000) * sustain + targetBubbles * perTargetFloor;
+  }
+
+  function stageTypeWeights(level) {
+    const cappedLevel = Math.min(level, 10);
+    const weights = {
+      bigRise: cappedLevel <= 2 ? 0.28 : 0.16,
+      bigSide: cappedLevel <= 3 ? 0.24 : 0.16,
+      normal: cappedLevel <= 2 ? 0.34 : 0.3,
+      crossArc: cappedLevel >= 2 ? 0.12 + cappedLevel * 0.01 : 0,
+      machine: cappedLevel >= 3 ? 0.12 + cappedLevel * 0.01 : 0,
+      sGroup: cappedLevel >= 4 ? 0.1 + cappedLevel * 0.012 : 0,
+    };
+    return weights;
+  }
+
+  function makeStagePlan(level) {
+    const totalBubbles = bubbleCountForLevel(level);
+    const correctRate = targetCorrectRateForLevel(level);
+    const targetBubbles = Math.max(1, Math.round(totalBubbles * correctRate));
+    const totalWater = stageWaterBudgetForLevel(level);
     return {
-      x: 0.5 + cx * cos - cy * sin,
-      y: 0.5 + cx * sin + cy * cos,
+      level,
+      totalBubbles,
+      targetBubbles,
+      correctRate,
+      totalWater,
+      perTargetWater: totalWater / targetBubbles,
+      weights: stageTypeWeights(level),
     };
   }
 
-  function backgroundMixAt(x, y, time = state.visualTime) {
-    const flowTime = backgroundMotionTime(time);
-    const nx = state.width > 0 ? x / state.width : 0.5;
+  function resetStagePlan(level = displayDifficultyLevel()) {
+    state.stageLevel = level;
+    state.stagePlan = makeStagePlan(level);
+    state.stageStartAt = state.elapsed;
+    state.stageSpawned = 0;
+    state.stageTargetSpawned = 0;
+    state.stageCorrectPops = 0;
+    state.stageMissedTargets = 0;
+    state.stageWrongPops = 0;
+    state.spawnFlow = null;
+    state.spawnFlowIndex = 0;
+    state.waterPressure = 0;
+    state.nextSpawnAt = Math.min(state.nextSpawnAt || state.elapsed + 140, state.elapsed + 180);
+  }
+
+  function stageElapsedMs() {
+    return Math.max(0, state.elapsed - state.stageStartAt);
+  }
+
+  function stageRemainingBubbles() {
+    if (!state.stagePlan) return 0;
+    return Math.max(0, state.stagePlan.totalBubbles - state.stageSpawned);
+  }
+
+  function stageCompletion() {
+    if (!state.stagePlan) return 0;
+    return clamp(state.stageSpawned / Math.max(1, state.stagePlan.totalBubbles), 0, 1);
+  }
+
+  function activeStageTargetCount() {
+    return state.bubbles.reduce(
+      (count, bubble) => count + (bubble.age >= 0 && bubble.colorIndex >= 0 && !bubble.isWhite && (bubble.waterValue ?? 0) > 0 ? 1 : 0),
+      0,
+    );
+  }
+
+  function applyStageAccuracyGate() {
+    const plan = state.stagePlan;
+    if (!plan) return true;
+    const deficit = Math.max(0, plan.targetBubbles - state.stageCorrectPops);
+    if (deficit <= 0) return true;
+
+    const deficitRatio = deficit / Math.max(1, plan.targetBubbles);
+    state.water = 0;
+    state.flash = Math.max(state.flash, 0.42 + deficitRatio * 0.28);
+    makeFloatText(
+      state.width * 0.5,
+      state.height * 0.42,
+      `Stage need ${plan.targetBubbles}/${plan.totalBubbles}`,
+      "#ffffff",
+      0.9,
+    );
+    endGame();
+    return false;
+  }
+
+  function maybeAdvanceStage() {
+    if (!state.stagePlan) {
+      resetStagePlan(1);
+      return;
+    }
+    const minimumStageTime = stageDurationMs * 0.78;
+    if (stageRemainingBubbles() > 0 || activeStageTargetCount() > 0 || stageElapsedMs() < minimumStageTime) return;
+    if (!applyStageAccuracyGate()) return;
+    const nextLevel = state.stageLevel + 1;
+    triggerDifficultyUp(nextLevel - 1);
+    resetStagePlan(nextLevel);
+  }
+
+  function backgroundTimingForLevel(level) {
+    const p = clamp((level - 1) / 9, 0, 1);
+    const earlyMotion = smoothstep(1, 5, level);
+    return {
+      hold: 14200 - p * 8200 - earlyMotion * 2600,
+      duration: 9800 - p * 2800,
+    };
+  }
+
+  function makeBackgroundLayout(level, step = 0) {
+    const p = clamp((level - 1) / 9, 0, 1);
+    const earlyMotion = 0.36 + smoothstep(1, 6, level) * 0.78;
+    const motion = clamp(earlyMotion, 0.32, 1.12);
+    const orbit = level >= 8 ? (step % 8) / 8 * Math.PI * 2 : step * 0.72;
+    const sign = Math.cos(orbit) >= 0 ? 1 : -1;
+    const mode = step % 6;
+    const splitAmp = level < 3 ? 0.038 : level < 5 ? 0.088 : level < 7 ? 0.13 : 0.158 + p * 0.052;
+    const tiltAmp = level < 3 ? 0.032 : level < 5 ? 0.074 : level < 7 ? 0.108 : 0.145;
+    const curveAmp = level < 3 ? 0.038 : level < 5 ? 0.064 : level < 7 ? 0.092 : 0.112 + p * 0.024;
+    const width = level < 4 ? 0.038 : clamp(0.046 + Math.sin(step * 0.72) * (0.008 + p * 0.014), 0.034, 0.078);
+    const splitWave = level >= 8 ? Math.cos(orbit) : sign * [0.32, 0.58, 0.9, 0.42, 0.74, 1][mode];
+    const tiltWave = level >= 8 ? Math.sin(orbit) : sign * [0.18, 0.35, 0.62, 0.95, 0.48, 0.78][mode];
+    const curveWave = level >= 8 ? Math.cos(orbit + Math.PI * 0.42) : [0.22, -0.36, 0.52, -0.75, 1, -0.58][mode];
+    return {
+      split: clamp(0.5 + splitAmp * splitWave * motion, 0.28, 0.72),
+      tilt: tiltAmp * tiltWave * motion,
+      curve: curveAmp * curveWave * motion,
+      phase: ((step * (level >= 7 ? 0.125 : 0.18)) % 1) + 0.08,
+      freq: 0.68 + (mode % 3) * 0.12 + p * 0.22,
+      width,
+    };
+  }
+
+  function mixBackgroundLayout(from, to, amount) {
+    return {
+      split: from.split + (to.split - from.split) * amount,
+      tilt: from.tilt + (to.tilt - from.tilt) * amount,
+      curve: from.curve + (to.curve - from.curve) * amount,
+      phase: from.phase + (to.phase - from.phase) * amount,
+      freq: from.freq + (to.freq - from.freq) * amount,
+      width: from.width + (to.width - from.width) * amount,
+    };
+  }
+
+  function ensureBackgroundFlow() {
+    const flow = state.backgroundFlow;
+    if (flow.current) return;
+    const initial = makeBackgroundLayout(1, 0);
+    flow.phase = "hold";
+    flow.elapsed = 0;
+    flow.step = 0;
+    flow.current = initial;
+    flow.from = initial;
+    flow.target = initial;
+    Object.assign(flow, backgroundTimingForLevel(1));
+  }
+
+  function resetBackgroundFlow() {
+    state.backgroundFlow.current = null;
+    ensureBackgroundFlow();
+  }
+
+  function updateBackgroundFlow(dt) {
+    ensureBackgroundFlow();
+    const flow = state.backgroundFlow;
+    const level = displayDifficultyLevel();
+    const timing = backgroundTimingForLevel(level);
+    flow.elapsed += dt * 1000;
+
+    if (flow.phase === "hold") {
+      flow.hold = timing.hold;
+      if (flow.elapsed < flow.hold) return;
+      flow.phase = "move";
+      flow.elapsed = 0;
+      flow.duration = timing.duration;
+      flow.from = { ...flow.current };
+      flow.step += 1;
+      flow.target = makeBackgroundLayout(level, flow.step);
+      return;
+    }
+
+    const amount = smoothstep(0, 1, flow.elapsed / Math.max(1, flow.duration));
+    flow.current = mixBackgroundLayout(flow.from, flow.target, amount);
+    if (flow.elapsed >= flow.duration) {
+      flow.current = { ...flow.target };
+      flow.phase = "hold";
+      flow.elapsed = 0;
+      flow.hold = timing.hold;
+    }
+  }
+
+  function backgroundLayoutAt() {
+    ensureBackgroundFlow();
+    return state.backgroundFlow.current;
+  }
+
+  function backgroundBoundaryRatioAtY(y) {
+    const layout = backgroundLayoutAt();
     const ny = state.height > 0 ? y / state.height : 0.5;
-    const stage = backgroundFlowStage();
-    const rotated = rotatedBackgroundPoint(nx, ny, time);
-    const fx = rotated.x;
-    const fy = rotated.y;
-    const cx = nx - 0.5;
-    const cy = ny - 0.5;
-    const d = difficulty();
-    const boundary = backgroundBoundaryForY(y, time);
-    const wave = smoothstep(0.08, 0.5, d);
-    const stageMix = stage / 4;
-    const highFlow = highFlowAmount();
-    const radius = Math.hypot(cx, cy);
-    const angle = Math.atan2(cy, cx);
-    const diagonal = wave * (fy - 0.5) * (0.09 + Math.sin(flowTime / 52000) * 0.018);
-    const primaryFlow = smoothstep(0.16, 0.76, d) * Math.sin((fx * 0.58 + fy * 0.42) * Math.PI * 2 + flowTime / 44000) * 0.044;
-    const secondaryFlow = smoothstep(0.42, 1, d) * Math.sin((fx * 0.72 - fy * 0.42) * Math.PI * 2 - flowTime / 64000) * 0.018;
-    const broadSwell = wave * Math.sin((fx * 0.26 + fy * 0.72) * Math.PI * 2 - flowTime / 72000) * 0.022;
-    const rotationalRibbon =
-      stage > 0
-        ? Math.sin((fx * (0.62 + stage * 0.05) - fy * 0.42) * Math.PI * 2 + flowTime / (52000 + stage * 7600)) *
-          (0.008 + stageMix * 0.014)
-        : 0;
-    const slowCurl =
-      stage > 1
-        ? Math.sin((Math.hypot(cx, cy) * (1.08 + stage * 0.12) + fx * 0.18 - fy * 0.16) * Math.PI * 2 - flowTime / 76000) *
-          (0.005 + stageMix * 0.009)
-        : 0;
-    const orbitSwell =
-      highFlow *
-      Math.sin(angle + radius * Math.PI * 2.35 - flowTime / 86000) *
-      (0.005 + stageMix * 0.007);
-    const wideCurrent =
-      highFlow *
-      Math.sin((fx * 0.3 + fy * 0.72) * Math.PI * 2 + Math.sin(flowTime / 78000) * 0.86) *
-      (0.006 + stageMix * 0.006);
-    const counterCurrent =
-      smoothstep(2.15, 3.7, stage) *
-      Math.sin((fx * 0.74 - fy * 0.2 + radius * 0.14) * Math.PI * 2 - flowTime / 124000) *
-      0.006;
-    const field =
-      fx +
-      diagonal +
-      primaryFlow +
-      secondaryFlow +
-      broadSwell +
-      rotationalRibbon +
-      slowCurl +
-      orbitSwell +
-      wideCurrent +
-      counterCurrent;
-    const softness =
-      0.32 +
-      smoothstep(0.25, 1, d) * 0.018 +
-      stageMix * 0.008 +
-      highFlow * 0.006 +
-      Math.sin(flowTime / 52000) * 0.004;
-    return smoothstep(boundary - softness, boundary + softness, field);
+    const centered = ny - 0.5;
+    const levelAmount = clamp((displayDifficultyLevel() - 1) / 9, 0, 1);
+    const curve = Math.sin((ny * layout.freq + layout.phase) * Math.PI * 2) * layout.curve;
+    const broad = Math.sin((ny * 0.46 + layout.phase * 0.7 + 0.16) * Math.PI * 2) * layout.curve * 0.46;
+    const breathe = Math.sin(state.visualTime / 26000) * (0.012 + levelAmount * 0.012);
+    const earlyRipple = Math.sin(ny * Math.PI * 1.35 + state.visualTime / 21000) * (0.015 + levelAmount * 0.01);
+    return clamp(layout.split + centered * layout.tilt + curve + broad + breathe + earlyRipple, 0.16, 0.84);
+  }
+
+  function backgroundMixAt(x, y, time = state.visualTime) {
+    const nx = state.width > 0 ? x / state.width : 0.5;
+    const layout = backgroundLayoutAt();
+    const boundary = backgroundBoundaryRatioAtY(y);
+    const softness = layout.width;
+    return smoothstep(-softness, softness, nx - boundary);
   }
 
   function backgroundColorIndexAt(x, y) {
@@ -413,7 +574,7 @@
   }
 
   function pickBombComboTarget() {
-    return Math.round(rand(10, 30));
+    return Math.round(rand(18, 42));
   }
 
   function resetBombComboTimer() {
@@ -426,14 +587,15 @@
   }
 
   function nextBubbleWaterValue() {
-    const round = currentWaterBudgetRound();
-    const value = round.total / round.count;
+    const level = displayDifficultyLevel();
+    if (!state.stagePlan || state.stagePlan.level !== level) {
+      resetStagePlan(level);
+    }
+    const plan = state.stagePlan;
+    const value = plan.perTargetWater;
     state.waterRoundSpawned += 1;
     state.waterOpportunityCount += 1;
-    if (state.waterRoundSpawned >= round.count && state.waterRoundIndex < waterBudgetRounds.length - 1) {
-      state.waterRoundIndex += 1;
-      state.waterRoundSpawned = 0;
-    }
+    state.stageTargetSpawned += 1;
     return value;
   }
 
@@ -511,7 +673,7 @@
         chargeClearSkill(0.012 + Math.min(0.018, state.combo * 0.002));
       }
       state.bombComboProgress += 1;
-      if (state.combo >= 10 && state.bombComboProgress >= state.bombComboTarget) {
+      if (state.combo >= 14 && state.bombComboProgress >= state.bombComboTarget) {
         if (spawnComboBomb()) {
           resetBombComboTimer();
         } else {
@@ -599,6 +761,7 @@
     clearSkillButton.disabled = !state.running || !skillReady;
     clearSkillValue.textContent =
       state.clearSkillUses >= clearSkillMaxUses ? "DONE" : skillReady ? "READY" : `${Math.round(state.clearSkillCharge * 100)}%`;
+    updateDebugPanel();
   }
 
   function resetGame() {
@@ -616,6 +779,14 @@
     state.waterRoundIndex = 0;
     state.waterRoundSpawned = 0;
     state.waterOpportunityCount = 0;
+    state.stageLevel = 1;
+    state.stageStartAt = 0;
+    state.stagePlan = null;
+    state.stageSpawned = 0;
+    state.stageTargetSpawned = 0;
+    state.stageCorrectPops = 0;
+    state.stageMissedTargets = 0;
+    state.stageWrongPops = 0;
     resetBombComboTimer();
     state.bombSpawnCursor = 0;
     state.difficultyTier = 0;
@@ -623,9 +794,13 @@
     state.openPopCount = 0;
     state.colorCursor = pickColorIndex();
     state.edgeCursor = Math.floor(rand(0, edgeCycle.length));
-    state.nextPowerAt = 9500;
+    state.nextPowerAt = 22000;
     state.nextStreamAt = 40000;
     state.nextSpawnAt = 120;
+    state.spawnFlow = null;
+    state.spawnFlowIndex = 0;
+    resetStagePlan(1);
+    resetBackgroundFlow();
     state.openUntil = 0;
     state.flash = 0;
     clearRuntimeEffects();
@@ -677,14 +852,14 @@
   }
 
   function difficulty() {
-    const seconds = state.elapsed / 1000;
-    const timePart = smoothstep(4, 96, seconds);
+    const levelPart = clamp((displayDifficultyLevel() - 1) / 9, 0, 1);
+    const stagePart = smoothstep(0.08, 0.92, stageCompletion());
     const scorePart = smoothstep(12, 220, state.score);
-    return clamp(timePart * 0.94 + scorePart * 0.32, 0, 1);
+    return clamp(levelPart * 0.82 + stagePart * 0.12 + scorePart * 0.16, 0, 1);
   }
 
   function difficultyTier(value) {
-    return Math.min(5, Math.floor(state.elapsed / 20000));
+    return Math.max(0, displayDifficultyLevel() - 1);
   }
 
   function triggerDifficultyUp(tier) {
@@ -694,40 +869,28 @@
   }
 
   function requiredCorrectRate() {
-    const seconds = state.elapsed / 1000;
-    return clamp(
-      0.46 +
-        smoothstep(60, 104, seconds) * 0.1 +
-        smoothstep(104, 172, seconds) * 0.08 +
-        smoothstep(172, 260, seconds) * 0.08,
-      0.46,
-      0.72,
-    );
+    return state.stagePlan?.correctRate ?? targetCorrectRateForLevel(displayDifficultyLevel());
   }
 
   function baseWaterDrainRate() {
-    const seconds = state.elapsed / 1000;
-    return (
-      0.18 +
-      smoothstep(12, 42, seconds) * 0.12 +
-      smoothstep(60, 150, seconds) * 0.34 +
-      smoothstep(150, 280, seconds) * 0.38
-    );
+    const level = displayDifficultyLevel();
+    const p = clamp((level - 1) / 9, 0, 1);
+    return levelWaterDrainRate(level) + smoothstep(0.58, 1, stageCompletion()) * (0.05 + p * 0.12);
   }
 
   function waterPressureHorizon() {
-    return 7.4 - smoothstep(60, 180, state.elapsed / 1000) * 1.35;
+    return 7.8 - clamp((displayDifficultyLevel() - 1) / 9, 0, 1) * 1.65;
   }
 
   function waterDrainRate() {
     const pressureRate = state.waterPressure / waterPressureHorizon();
-    return baseWaterDrainRate() + pressureRate * requiredCorrectRate();
+    return baseWaterDrainRate() + pressureRate * requiredCorrectRate() * 0.18;
   }
 
   function drainWater(dt) {
     const pressureRate = state.waterPressure / waterPressureHorizon();
     state.waterPressure = Math.max(0, state.waterPressure - pressureRate * dt);
-    state.water -= (baseWaterDrainRate() + pressureRate * requiredCorrectRate()) * dt;
+    state.water -= (baseWaterDrainRate() + pressureRate * requiredCorrectRate() * 0.18) * dt;
   }
 
   function formatWaterGain(value) {
@@ -755,13 +918,44 @@
   }
 
   function noteWaterOpportunity(bubble) {
-    state.waterPressure = Math.min(waterPressureCap, state.waterPressure + waterOpportunityValue(bubble));
+    if (!bubble || bubble.colorIndex < 0) return;
+  }
+
+  function recordStageCorrect(bubble) {
+    if (!state.stagePlan || !bubble) return;
+    if (bubble.colorIndex < 0 || bubble.isWhite || (bubble.waterValue ?? 0) <= 0) return;
+    state.stageCorrectPops = Math.min(state.stageCorrectPops + 1, state.stagePlan.totalBubbles);
+  }
+
+  function isStageTargetBubble(bubble) {
+    return Boolean(bubble && bubble.colorIndex >= 0 && !bubble.isWhite && (bubble.waterValue ?? 0) > 0);
+  }
+
+  function stageMistakePenalty(type, bubble) {
+    const level = displayDifficultyLevel();
+    const p = clamp((level - 1) / 9, 0, 1);
+    const sizeFactor = bubble ? clamp(bubble.baseRadius / 42, 0.62, 1.25) : 1;
+    if (type === "wrong") return (4.2 + p * 4.8) * sizeFactor;
+    return (1.25 + p * 2.65) * sizeFactor;
+  }
+
+  function penalizeStageMistake(bubble, type) {
+    if (!isStageTargetBubble(bubble)) return;
+    const penalty = stageMistakePenalty(type, bubble);
+    if (type === "wrong") state.stageWrongPops += 1;
+    if (type === "miss") state.stageMissedTargets += 1;
+    state.waterPressure = Math.min(waterPressureCap, state.waterPressure + penalty * 0.85);
+    state.water = Math.max(0, state.water - penalty);
+    if (state.water <= 0) {
+      endGame();
+    }
   }
 
   function bubbleRadiusRange(d, kind = "normal") {
     const shrink = smoothstep(0.04, 1, d);
     const ranges = {
       normal: [47, 55, 27, 35],
+      large: [60, 70, 39, 50],
       small: [35, 42, 20, 27],
       stream: [18, 22, 17, 20],
       cluster: [36, 44, 23, 31],
@@ -779,6 +973,16 @@
   function radiusForDifficulty(d, kind = "normal") {
     const range = bubbleRadiusRange(d, kind);
     return rand(range.min, range.max);
+  }
+
+  function radiusForArchetype(type) {
+    const base = clamp(Math.min(state.width, state.height) * 0.125, 48, 68);
+    if (type === "bigRise") return base * rand(0.9, 1.0);
+    if (type === "bigSide") return base * rand(0.8, 0.9);
+    if (type === "machine") return rand(20, 30);
+    if (type === "sGroup") return rand(30, 42);
+    if (type === "small") return rand(26, 36);
+    return rand(38, 50);
   }
 
   function radiusJitter(d, base = 0.04, extra = 0.11) {
@@ -804,6 +1008,9 @@
     const margin = 72;
     const edge = pickSpawnEdge(options.edge);
     const kind = forcedKind === "open" ? "normal" : (forcedKind ?? "normal");
+    if (kind === "normal" && !options.ignoreStageBudget && state.stagePlan && state.stageSpawned >= state.stagePlan.totalBubbles) {
+      return false;
+    }
     const isSuper = false;
     const isClear = kind === "clear";
     const isBleach = kind === "bleach";
@@ -813,7 +1020,8 @@
       options.isStream ||
       forcedSize === "small" ||
       (forcedSize !== "normal" && (forceSmall || (d > 0.58 && Math.random() < (d - 0.42) * 0.34)));
-    const radius = options.radius ?? radiusForDifficulty(d, smallWave ? "small" : "normal");
+    const radiusKind = forcedSize === "large" ? "large" : smallWave ? "small" : "normal";
+    const radius = options.radius ?? radiusForDifficulty(d, radiusKind);
     const speed = options.speed ?? rand(24 + d * 18, 50 + d * 42);
     let x;
     let y;
@@ -876,6 +1084,8 @@
       streamPhase: options.streamPhase ?? rand(0, Math.PI * 2),
       streamAmplitude: options.streamAmplitude ?? 0,
       streamFrequency: options.streamFrequency ?? 3.6,
+      arcBend: options.arcBend ?? 0,
+      arcLife: options.arcLife ?? 2.8,
       openReady: false,
       wobble: rand(0, Math.PI * 2),
       wobbleSpeed: options.isStream ? rand(0.6, 1.05) : rand(1.1, 2.2),
@@ -886,6 +1096,9 @@
       edge,
     };
     state.bubbles.push(bubble);
+    if (kind === "normal" && !options.ignoreStageBudget) {
+      state.stageSpawned += 1;
+    }
     noteWaterOpportunity(bubble);
 
     const hintColor = isBomb
@@ -916,7 +1129,7 @@
     const d = difficulty();
     const edge = edgeCycle[state.bombSpawnCursor % edgeCycle.length];
     state.bombSpawnCursor += 1;
-    const radius = radiusForDifficulty(d, "normal") * rand(0.74, 0.88);
+    const radius = radiusForDifficulty(d, "stream") * rand(0.72, 0.9);
     const horizontal = edge === "left" || edge === "right";
     const anchor =
       (horizontal ? state.height : state.width) *
@@ -931,7 +1144,7 @@
           x: clamp(anchor + Math.cos(state.combo * 0.29) * state.width * 0.13, state.width * 0.22, state.width * 0.78),
           y: edge === "top" ? state.height * 0.72 : state.height * 0.28,
         };
-    const speed = rand(62 + d * 18, 82 + d * 24);
+    const speed = rand(148 + d * 42, 196 + d * 62);
     const velocity = aimedVelocity(start.x, start.y, target, speed, 2);
     return spawnBubble(false, "bomb", {
       edge,
@@ -945,6 +1158,7 @@
   }
 
   function makeSpawnHint(edge, x, y, radius, color, alpha = 0.36, count = 1) {
+    return;
     const size = clamp(radius * (3.15 + Math.min(2.35, Math.sqrt(count) * 0.5)), 34, 124);
     const depth = clamp(radius * (1.55 + Math.min(1.05, count * 0.04)), 22, 62);
     const inset = Math.max(12, depth * 0.62);
@@ -1107,51 +1321,422 @@
     }
   }
 
+  function spawnAxisLength(edge) {
+    return edge === "left" || edge === "right" ? state.height : state.width;
+  }
+
+  function pointFromSpawnRegion(region, radius, progress, jitter = 0.035) {
+    const axis = spawnAxisLength(region.edge);
+    const center = region.start + (region.end - region.start) * smoothstep(0, 1, progress);
+    const drift = Math.sin(progress * Math.PI * 2 + region.phase) * (region.max - region.min) * 0.08;
+    const offset = clamp((center + drift + rand(-jitter, jitter)) * axis, region.min * axis, region.max * axis);
+    return pointFromEdge(region.edge, radius, offset);
+  }
+
+  function makeSpawnRegion(base, phase = 0) {
+    const span = base.max - base.min;
+    const center = rand(base.min + span * 0.24, base.max - span * 0.24);
+    const drift = rand(-span * 0.32, span * 0.32);
+    return {
+      ...base,
+      start: clamp(center - drift * 0.5, base.min, base.max),
+      end: clamp(center + drift * 0.5, base.min, base.max),
+      phase: rand(0, Math.PI * 2) + phase,
+    };
+  }
+
+  function oppositeEdge(edge) {
+    if (edge === "left") return "right";
+    if (edge === "right") return "left";
+    if (edge === "top") return "bottom";
+    return "top";
+  }
+
+  function createSpawnFlow() {
+    const level = displayDifficultyLevel();
+    if (!state.stagePlan || state.stagePlan.level !== level) {
+      resetStagePlan(level);
+    }
+    const d = difficulty();
+    const type = chooseSpawnArchetype(level, d);
+    const forcedEdge =
+      type === "bigRise"
+        ? "bottom"
+        : type === "bigSide"
+          ? Math.random() < 0.5 ? "left" : "right"
+          : null;
+    const candidates = forcedEdge ? spawnRegions.filter((region) => region.edge === forcedEdge) : spawnRegions;
+    const primaryIndex = (state.spawnFlowIndex * (level < 4 ? 3 : 4) + Math.floor(rand(0, Math.min(3, candidates.length)))) % candidates.length;
+    const primaryBase = candidates[primaryIndex];
+    const secondaryBase =
+      type === "crossArc"
+        ? spawnRegions.filter((region) => region.edge === oppositeEdge(primaryBase.edge))[
+            (primaryIndex + Math.floor(rand(0, 3))) % spawnRegions.filter((region) => region.edge === oppositeEdge(primaryBase.edge)).length
+          ]
+        : Math.random() < (level < 3 ? 0.24 : 0.48)
+          ? spawnRegions[(primaryIndex + Math.floor(rand(3, spawnRegions.length - 1))) % spawnRegions.length]
+          : null;
+    state.spawnFlowIndex += 1;
+    return {
+      startAt: state.elapsed,
+      duration: type === "machine" || type === "crossArc" ? rand(3200, 5200) : rand(4400, 7600) - d * 500,
+      primary: makeSpawnRegion(primaryBase),
+      secondary: secondaryBase ? makeSpawnRegion(secondaryBase, 1.4) : null,
+      type,
+      share: rand(0.72, 0.86),
+      peak: rand(0.42, 0.62),
+      usedBurst: false,
+      usedLarge: false,
+    };
+  }
+
+  function chooseSpawnArchetype(level, d) {
+    const weights = state.stagePlan?.weights ?? stageTypeWeights(level);
+    const choices = Object.entries(weights)
+      .map(([type, weight]) => [type, Math.max(0, weight * rand(0.94, 1.06) + d * 0.02)])
+      .filter(([, weight]) => weight > 0);
+    const total = choices.reduce((sum, [, weight]) => sum + weight, 0);
+    let roll = Math.random() * total;
+    for (const [type, weight] of choices) {
+      roll -= weight;
+      if (roll <= 0) return type;
+    }
+    return "normal";
+  }
+
+  function ensureSpawnFlow() {
+    if (!state.spawnFlow || state.elapsed >= state.spawnFlow.startAt + state.spawnFlow.duration) {
+      state.spawnFlow = createSpawnFlow();
+    }
+    return state.spawnFlow;
+  }
+
+  function spawnFlowProgress(flow) {
+    return clamp((state.elapsed - flow.startAt) / Math.max(1, flow.duration), 0, 1);
+  }
+
+  function spawnFlowRhythm(flow) {
+    const progress = spawnFlowProgress(flow);
+    const pulse = Math.sin(progress * Math.PI);
+    const peak = Math.exp(-Math.pow((progress - flow.peak) / 0.18, 2));
+    return clamp(0.48 + pulse * 0.62 + peak * 0.36, 0.42, 1.62);
+  }
+
+  function scheduleFlowSpawn(flow, count = 1) {
+    const d = difficulty();
+    const remaining = Math.max(1, stageRemainingBubbles());
+    const remainingMs = Math.max(700, state.stageStartAt + stageDurationMs - state.elapsed);
+    const budgetInterval = remainingMs / remaining;
+    const base =
+      flow.type === "bigRise"
+        ? 1280
+        : flow.type === "bigSide"
+          ? 1120
+          : flow.type === "crossArc"
+            ? 560
+          : flow.type === "machine" && !flow.usedBurst
+            ? 360
+            : flow.type === "sGroup"
+              ? 720
+              : 860;
+    const flowInterval = (base * rand(0.82, 1.22)) / spawnFlowRhythm(flow) - d * 110;
+    const interval = clamp(Math.min(flowInterval, budgetInterval * rand(0.74, 1.16)), 220, 1500);
+    state.nextSpawnAt = state.elapsed + interval + Math.max(0, count - 1) * 52;
+  }
+
+  function pickFlowRegion(flow) {
+    if (flow.type === "bigRise" || flow.type === "bigSide" || flow.type === "machine" || flow.type === "sGroup" || flow.type === "crossArc") return flow.primary;
+    return flow.secondary && Math.random() > flow.share ? flow.secondary : flow.primary;
+  }
+
+  function activeLargeBubbleCount() {
+    return state.bubbles.reduce((count, bubble) => count + (bubble.age >= -0.2 && bubble.baseRadius >= 42 ? 1 : 0), 0);
+  }
+
+  function spawnPointCrowded(x, y, radius, colorIndex) {
+    for (let i = state.bubbles.length - 1; i >= 0; i -= 1) {
+      const other = state.bubbles[i];
+      if (other.age < -0.4) continue;
+      const dx = x - other.x;
+      const dy = y - other.y;
+      const bigOrDifferent = radius >= 36 || other.baseRadius >= 36 || (colorIndex >= 0 && other.colorIndex >= 0 && colorIndex !== other.colorIndex);
+      const minDistance = (radius + other.baseRadius) * (bigOrDifferent ? 0.82 : 0.54);
+      if (dx * dx + dy * dy < minDistance * minDistance) return true;
+    }
+    return false;
+  }
+
+  function targetForArchetype(flow, region, start, colorIndex) {
+    if (flow.type === "bigRise") {
+      return {
+        x: clamp(start.x + rand(-state.width * 0.12, state.width * 0.12), state.width * 0.16, state.width * 0.84),
+        y: -state.height * rand(0.08, 0.18),
+      };
+    }
+    if (flow.type === "bigSide") {
+      const toRight = region.edge === "left";
+      return {
+        x: toRight ? state.width + state.width * 0.14 : -state.width * 0.14,
+        y: clamp(start.y + rand(-state.height * 0.08, state.height * 0.08), state.height * 0.18, state.height * 0.82),
+      };
+    }
+    return matchingPointForColorFromEdge(colorIndex, region.edge, start.y, start.x);
+  }
+
+  function speedForArchetype(type, sizeKind, d) {
+    if (type === "bigRise") return rand(28 + d * 6, 42 + d * 10);
+    if (type === "bigSide") return rand(34 + d * 8, 52 + d * 12);
+    if (type === "machine") return rand(92 + d * 18, 124 + d * 28);
+    if (type === "crossArc") return rand(68 + d * 14, 92 + d * 24);
+    if (type === "sGroup") return rand(48 + d * 16, 72 + d * 26);
+    if (sizeKind === "small") return rand(52 + d * 18, 76 + d * 28);
+    return rand(40 + d * 14, 64 + d * 24);
+  }
+
+  function spawnFlowBubble(flow, options = {}) {
+    const d = difficulty();
+    let region = options.region ?? pickFlowRegion(flow);
+    const progress = spawnFlowProgress(flow);
+    const sizeKind =
+      options.sizeKind ??
+      (flow.type === "bigRise" || flow.type === "bigSide"
+        ? "large"
+        : flow.type === "sGroup"
+          ? Math.random() < 0.68 ? "small" : "normal"
+          : Math.random() < 0.52 ? "small" : "normal");
+    const radius =
+      options.radius ??
+      (flow.type === "bigRise" || flow.type === "bigSide" || flow.type === "sGroup"
+        ? radiusForArchetype(flow.type)
+        : radiusForArchetype(sizeKind));
+    let colorIndex = options.colorIndex ?? pickBalancedColorIndex();
+    let start = pointFromSpawnRegion(region, radius, progress);
+    if (options.colorIndex === undefined && (flow.type === "bigRise" || flow.type === "bigSide")) {
+      colorIndex = backgroundColorIndexAt(clamp(start.x, 0, state.width), clamp(start.y, 0, state.height));
+    }
+    for (let attempt = 0; attempt < 6 && spawnPointCrowded(start.x, start.y, radius, colorIndex); attempt += 1) {
+      region = attempt > 2 && flow.secondary ? flow.secondary : region;
+      start = pointFromSpawnRegion(region, radius, clamp(progress + attempt * 0.05, 0, 1), 0.06);
+    }
+    if (spawnPointCrowded(start.x, start.y, radius, colorIndex)) return false;
+    if (options.colorIndex === undefined && (flow.type === "bigRise" || flow.type === "bigSide")) {
+      colorIndex = backgroundColorIndexAt(clamp(start.x, 0, state.width), clamp(start.y, 0, state.height));
+    }
+
+    const target = targetForArchetype(flow, region, start, colorIndex);
+    const speed = speedForArchetype(flow.type, sizeKind, d);
+    const velocity = aimedVelocity(start.x, start.y, target, speed, flow.type === "bigRise" || flow.type === "bigSide" ? 3 : 8);
+    const spawned = spawnBubble(sizeKind === "small", "normal", {
+      edge: region.edge,
+      x: start.x,
+      y: start.y,
+      colorIndex,
+      target,
+      velocity,
+      radius,
+      speed,
+      sizeKind,
+      isStream: flow.type === "sGroup",
+      streamPattern: flow.type === "sGroup" ? "sGroup" : "float",
+      streamAmplitude: flow.type === "sGroup" ? rand(16, 28) : 0,
+      streamFrequency: flow.type === "sGroup" ? rand(2.1, 3.0) : 3.6,
+      quietHint: Boolean(options.quietHint),
+    });
+    if (spawned && sizeKind === "large") flow.usedLarge = true;
+    return spawned;
+  }
+
+  function spawnFlowGun(flow, maxAllowed = maxActiveBubbles) {
+    const d = difficulty();
+    const region = flow.primary;
+    const sameColor = displayDifficultyLevel() < 5;
+    const colorIndex = sameColor ? pickBalancedColorIndex() : null;
+    const count = Math.min(Math.round(rand(5, 9)), maxAllowed, Math.max(0, maxActiveBubbles - state.bubbles.length));
+    const radius = radiusForArchetype("machine");
+    const base = pointFromSpawnRegion(region, radius, spawnFlowProgress(flow), 0.012);
+    makeSpawnHint(region.edge, base.x, base.y, radius, sameColor ? palette[colorIndex].light : clearTone.light, 0.34, count);
+    const inward = edgeDirection(region.edge);
+    const horizontal = region.edge === "left" || region.edge === "right";
+    const perp = horizontal ? { x: 0, y: 1 } : { x: 1, y: 0 };
+    const fan = rand(-0.32, 0.32);
+    let spawned = 0;
+    for (let i = 0; i < count; i += 1) {
+      const pickedColor = sameColor ? colorIndex : pickBalancedColorIndex();
+      const lane = (i - (count - 1) / 2) * radius * rand(0.22, 0.36);
+      const start = {
+        x: base.x + perp.x * lane - inward.x * i * radius * 0.16,
+        y: base.y + perp.y * lane - inward.y * i * radius * 0.16,
+      };
+      const target = {
+        x: start.x + (inward.x + perp.x * fan) * state.width * rand(0.72, 1.08),
+        y: start.y + (inward.y + perp.y * fan) * state.height * rand(0.72, 1.08),
+      };
+      const speed = speedForArchetype("machine", "small", d) * rand(0.94, 1.12);
+      const velocity = aimedVelocity(start.x, start.y, target, speed, 3);
+      const didSpawn = spawnBubble(true, "normal", {
+        edge: region.edge,
+        x: start.x,
+        y: start.y,
+        colorIndex: pickedColor,
+        target,
+        velocity,
+        radius: radius * radiusJitter(d, 0.04, 0.12),
+        speed,
+        isStream: true,
+        streamPattern: "spray",
+        streamAmplitude: 4 + d * 5,
+        streamFrequency: 2.8 + d,
+        streamPhase: i * 0.48,
+        delay: i * rand(0.065, 0.095),
+        quietHint: true,
+      });
+      if (didSpawn) spawned += 1;
+    }
+    flow.usedBurst = true;
+    return spawned;
+  }
+
+  function spawnFlowCrossArc(flow, maxAllowed = maxActiveBubbles) {
+    const d = difficulty();
+    const capacity = Math.max(0, maxActiveBubbles - state.bubbles.length);
+    const total = Math.min(Math.round(rand(6, 10)), maxAllowed, capacity);
+    if (total <= 1) return 0;
+
+    const regions = [flow.primary, flow.secondary ?? flow.primary];
+    const firstCount = Math.ceil(total / 2);
+    const counts = [firstCount, total - firstCount];
+    let spawned = 0;
+
+    for (let side = 0; side < 2; side += 1) {
+      const region = regions[side];
+      const sideCount = counts[side];
+      if (!region || sideCount <= 0) continue;
+
+      const inward = edgeDirection(region.edge);
+      const horizontal = region.edge === "left" || region.edge === "right";
+      const perp = horizontal ? { x: 0, y: 1 } : { x: 1, y: 0 };
+      const radius = radiusForDifficulty(d, "stream") * rand(1.08, 1.34);
+      const base = pointFromSpawnRegion(region, radius, spawnFlowProgress(flow), 0.018);
+      const curveSign = side === 0 ? 1 : -1;
+      const stringColor = Math.random() < (displayDifficultyLevel() < 5 ? 0.76 : 0.48) ? pickBalancedColorIndex() : null;
+
+      for (let i = 0; i < sideCount; i += 1) {
+        const colorIndex = stringColor ?? pickBalancedColorIndex();
+        const lane = (i - (sideCount - 1) / 2) * radius * rand(0.4, 0.62);
+        const forward = i * radius * rand(0.24, 0.38);
+        const start = {
+          x: base.x + perp.x * lane - inward.x * forward,
+          y: base.y + perp.y * lane - inward.y * forward,
+        };
+        if (spawnPointCrowded(start.x, start.y, radius, colorIndex)) continue;
+
+        const target = {
+          x: start.x + inward.x * state.width * rand(0.7, 0.98) + perp.x * curveSign * state.width * rand(0.1, 0.18),
+          y: start.y + inward.y * state.height * rand(0.7, 0.98) + perp.y * curveSign * state.height * rand(0.1, 0.18),
+        };
+        const speed = speedForArchetype("crossArc", "small", d) * rand(0.9, 1.12);
+        const velocity = aimedVelocity(start.x, start.y, target, speed, 4);
+        const didSpawn = spawnBubble(true, "normal", {
+          edge: region.edge,
+          x: start.x,
+          y: start.y,
+          colorIndex,
+          target,
+          velocity,
+          radius,
+          speed,
+          isStream: true,
+          streamPattern: "arcDuo",
+          streamAmplitude: 2 + d * 5,
+          streamFrequency: 1.4 + d * 0.5,
+          streamPhase: i * 0.34 + side * Math.PI,
+          arcBend: curveSign * rand(36 + d * 8, 58 + d * 18),
+          arcLife: rand(2.0, 2.8),
+          delay: i * rand(0.055, 0.082) + side * 0.055,
+          quietHint: true,
+        });
+        if (didSpawn) spawned += 1;
+      }
+    }
+
+    flow.usedBurst = true;
+    return spawned;
+  }
+
+  function spawnFlowSGroup(flow, maxAllowed = maxActiveBubbles) {
+    const count = Math.min(Math.round(rand(3, 5)), maxAllowed, Math.max(0, maxActiveBubbles - state.bubbles.length));
+    if (count <= 0) return 0;
+    const region = flow.primary;
+    const colorIndex = Math.random() < 0.58 ? pickBalancedColorIndex() : null;
+    let spawned = 0;
+    for (let i = 0; i < count; i += 1) {
+      if (spawnFlowBubble(flow, {
+        region,
+        sizeKind: Math.random() < 0.65 ? "small" : "normal",
+        colorIndex: colorIndex ?? pickBalancedColorIndex(),
+        quietHint: i > 0,
+      })) {
+        spawned += 1;
+      }
+    }
+    flow.usedBurst = true;
+    return spawned;
+  }
+
   function spawnWave() {
     const d = difficulty();
     const level = displayDifficultyLevel();
-    const maxWaveCount = level <= 2 ? 1 : level === 3 ? 2 : level === 4 ? 3 : 4;
-    const baseInterval = Math.max(480, 1180 - d * 620 - Math.min(150, state.score * 1.35));
-    state.nextSpawnAt = state.elapsed + baseInterval * rand(0.78, 1.08);
+    if (!state.stagePlan || state.stagePlan.level !== level) {
+      resetStagePlan(level);
+    }
+    const flow = ensureSpawnFlow();
+    const remainingStage = stageRemainingBubbles();
 
-    if (state.bubbles.length >= maxActiveBubbles) return;
+    if (remainingStage <= 0) {
+      state.nextSpawnAt = Math.max(state.nextSpawnAt, state.elapsed + 360);
+      return;
+    }
+
+    if (state.bubbles.length >= maxActiveBubbles) {
+      scheduleFlowSpawn(flow);
+      return;
+    }
 
     if (state.elapsed >= state.nextPowerAt && state.bubbles.length >= 2 && state.bubbles.length <= maxActiveBubbles - 1) {
       spawnBubble(false, "bleach");
-      state.nextPowerAt = state.elapsed + rand(11500 - d * 2400, 19000 - d * 3400);
+      state.nextPowerAt = state.elapsed + rand(28000 - d * 4200, 44000 - d * 6200);
+      scheduleFlowSpawn(flow);
       return;
     }
 
-    if (level >= 3 && state.elapsed >= state.nextStreamAt && state.bubbles.length <= (level === 3 ? 7 : 8)) {
-      spawnBubbleStream(d);
-      state.nextStreamAt = state.elapsed + rand(13000 - d * 3800, 21000 - d * 5600);
+    if (level >= 2 && flow.type === "crossArc" && !flow.usedBurst && state.bubbles.length <= 6) {
+      const count = spawnFlowCrossArc(flow, remainingStage);
+      scheduleFlowSpawn(flow, Math.max(1, count));
       return;
     }
 
-    if (level >= 3 && state.bubbles.length <= maxActiveBubbles - 3) {
-      const varietyRoll = Math.random();
-      if (d > 0.2 && varietyRoll < (level === 3 ? 0.1 + d * 0.08 : 0.16 + d * 0.1)) {
-        spawnBubbleCluster(d, maxWaveCount);
-        return;
-      }
-      if (level >= 4 && d > 0.4 && varietyRoll < 0.24 + d * 0.08) {
-        spawnBubbleFan(d, maxWaveCount);
-        return;
-      }
+    if (level >= 3 && flow.type === "machine" && !flow.usedBurst && state.bubbles.length <= 7) {
+      const count = spawnFlowGun(flow, remainingStage);
+      scheduleFlowSpawn(flow, Math.max(1, count));
+      return;
+    }
+
+    if (level >= 4 && flow.type === "sGroup" && !flow.usedBurst && state.bubbles.length <= 8) {
+      const count = spawnFlowSGroup(flow, remainingStage);
+      scheduleFlowSpawn(flow, Math.max(1, count));
+      return;
     }
 
     let count = 1;
-    if (level >= 4 && d > 0.62 && Math.random() < (d - 0.5) * 0.28) count += Math.floor(rand(1, 3 + d * 1.5));
-    if (level >= 5 && d > 0.86 && Math.random() < 0.12) count += Math.floor(rand(1, 3));
-    count = Math.min(maxWaveCount, Math.max(0, maxActiveBubbles - state.bubbles.length), count);
+    if (flow.type === "normal" && level >= 4 && spawnFlowRhythm(flow) > 1.25 && Math.random() < 0.36 + d * 0.16) count += 1;
+    if (level <= 2) count = 1;
+    count = Math.min(count, remainingStage, Math.max(0, maxActiveBubbles - state.bubbles.length));
     if (count <= 0) return;
 
-    const normalAnchorIndex = count > 1 ? Math.floor(rand(0, count)) : -1;
     for (let index = 0; index < count; index += 1) {
-      const smallChance = clamp(0.54 + d * 0.22 + (index > 0 ? 0.08 : 0) + (count > 3 ? 0.05 : 0), 0.52, 0.82);
-      const sizeKind = index === normalAnchorIndex ? "normal" : Math.random() < smallChance ? "small" : null;
-      spawnBubble(false, null, { sizeKind });
+      spawnFlowBubble(flow, { quietHint: index > 0 });
     }
+    scheduleFlowSpawn(flow, count);
   }
 
   function activateOpenMode(x, y) {
@@ -1181,6 +1766,7 @@
     state.bubbles = waiting;
     for (let i = 0; i < cleared.length; i += 1) {
       registerCombo({ chargeSkill: false });
+      recordStageCorrect(cleared[i]);
     }
     state.poppedCount += cleared.length;
     state.score += cleared.length;
@@ -1361,6 +1947,7 @@
     state.bubbles.splice(index, 1);
     state.poppedCount += 1;
     registerCombo({ chargeSkill: false });
+    recordStageCorrect(bubble);
     state.score += bubble.isWhite ? 1 : 1;
     addWater(bubble.isWhite ? 1.1 : Math.min(2.4, (bubble.waterValue ?? 1.8) * 0.42));
     state.ripples.push({
@@ -1508,6 +2095,7 @@
     state.bubbles.splice(index, 1);
     state.poppedCount += 1;
     registerCombo();
+    recordStageCorrect(bubble);
 
     if (bubble.isClear) {
       makeFloatText(bubble.x, bubble.y - bubble.radius, `x${state.combo} 清屏`, clearTone.light, 1.08);
@@ -1589,6 +2177,7 @@
 
   function missBubble(bubble, index, isTap) {
     const color = bubble.colorIndex >= 0 ? palette[bubble.colorIndex] : openTone;
+    penalizeStageMistake(bubble, "wrong");
     state.bubbles.splice(index, 1);
     resetCombo();
     state.ripples.push({
@@ -1801,6 +2390,8 @@
     if (!state.running) return;
 
     state.elapsed += dt * 1000;
+    updateBackgroundFlow(dt);
+    maybeAdvanceStage();
     const d = difficulty();
     const tier = difficultyTier(d);
     if (tier > state.difficultyTier) {
@@ -1821,6 +2412,7 @@
     while (state.elapsed >= state.nextSpawnAt) {
       spawnWave();
     }
+    maybeAdvanceStage();
 
     for (let i = state.bubbles.length - 1; i >= 0; i -= 1) {
       const bubble = state.bubbles[i];
@@ -1844,8 +2436,12 @@
       const perpX = -bubble.vy / speed;
       const perpY = bubble.vx / speed;
       const sway = Math.sin(bubble.wobble) * (bubble.isStream ? 4 + d * 5 : 12 + d * 16);
-      bubble.x += (bubble.vx + sway * bubble.drift + perpX * streamWave) * dt;
-      bubble.y += (bubble.vy + (bubble.isStream ? 0 : Math.cos(bubble.wobble * 0.7) * 10) + perpY * streamWave) * dt;
+      const arcPush = bubble.arcBend
+        ? Math.sin(clamp(bubble.age / Math.max(0.4, bubble.arcLife), 0, 1) * Math.PI) * bubble.arcBend
+        : 0;
+      const curvePush = streamWave + arcPush;
+      bubble.x += (bubble.vx + sway * bubble.drift + perpX * curvePush) * dt;
+      bubble.y += (bubble.vy + (bubble.isStream ? 0 : Math.cos(bubble.wobble * 0.7) * 10) + perpY * curvePush) * dt;
       bubble.radius = bubble.baseRadius * (1 + Math.sin(bubble.age * 4.2) * 0.028);
 
       const entered =
@@ -1869,6 +2465,7 @@
         bubble.y > state.height + bubble.radius * 2;
 
       if (outside && (bubble.hasEntered || bubble.age > 4.5)) {
+        penalizeStageMistake(bubble, "miss");
         state.bubbles.splice(i, 1);
       }
     }
@@ -1947,223 +2544,78 @@
   }
 
   function backgroundBoundaryGuideX(y, time) {
-    const flowTime = backgroundMotionTime(time);
-    const baseX = backgroundBoundaryForY(y, time) * state.width;
-    const ny = state.height > 0 ? y / state.height : 0.5;
-    const stage = backgroundFlowStage();
-    const highFlow = highFlowAmount();
-    const slowOffset =
-      Math.sin(ny * Math.PI * 1.35 + flowTime / 94000) * state.width * 0.018 * highFlow +
-      Math.sin(ny * Math.PI * 2.1 - flowTime / 116000) * state.width * 0.012 * smoothstep(2, 4, stage);
-    return clamp(baseX + slowOffset, state.width * 0.08, state.width * 0.92);
+    return backgroundBoundaryRatioAtY(y, time) * state.width;
   }
 
   function backgroundBoundaryXAtY(y, time, preferredX = null) {
-    const step = Math.max(8, state.width / 44);
-    const guideX = backgroundBoundaryGuideX(y, time);
-    const anchorX = preferredX ?? guideX;
-    let previousX = 0;
-    let previousValue = backgroundMixAt(previousX, y, time) - 0.5;
-    let bestX = guideX;
-    let bestScore = Number.POSITIVE_INFINITY;
-    let bestCrossX = null;
-    let bestCrossScore = Number.POSITIVE_INFINITY;
-
-    for (let x = step; x <= state.width + 0.1; x += step) {
-      const sampleX = Math.min(x, state.width);
-      const value = backgroundMixAt(sampleX, y, time) - 0.5;
-      const fallbackScore =
-        Math.abs(value) * 1.2 +
-        (Math.abs(sampleX - anchorX) / Math.max(1, state.width)) * 0.2 +
-        (Math.abs(sampleX - guideX) / Math.max(1, state.width)) * 0.08;
-      if (fallbackScore < bestScore) {
-        bestScore = fallbackScore;
-        bestX = sampleX;
-      }
-
-      if (previousValue === 0 || value === 0 || Math.sign(previousValue) !== Math.sign(value)) {
-        const amount = Math.abs(previousValue) / Math.max(0.0001, Math.abs(previousValue) + Math.abs(value));
-        const crossX = previousX + (sampleX - previousX) * amount;
-        const crossScore =
-          Math.abs(crossX - anchorX) +
-          Math.abs(crossX - guideX) * 0.25;
-        if (crossScore < bestCrossScore) {
-          bestCrossScore = crossScore;
-          bestCrossX = crossX;
-        }
-      }
-
-      previousX = sampleX;
-      previousValue = value;
-    }
-
-    return bestCrossX ?? bestX;
+    return backgroundBoundaryGuideX(y, time);
   }
 
-  function drawBackgroundBoundary(time, d) {
-    const gap = Math.max(22, state.height / 32);
-    const highFlow = highFlowAmount();
-    let previousX = null;
+  function backgroundBoundaryPoints(time) {
+    const gap = Math.max(12, state.height / 64);
+    const points = [];
+    for (let y = -gap; y <= state.height + gap + 0.1; y += gap) {
+      points.push({ x: backgroundBoundaryXAtY(y, time), y });
+    }
+    return points;
+  }
+
+  function traceBackgroundBoundary(points) {
+    if (!points.length) return;
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length - 1; i += 1) {
+      const current = points[i];
+      const next = points[i + 1];
+      ctx.quadraticCurveTo(current.x, current.y, (current.x + next.x) * 0.5, (current.y + next.y) * 0.5);
+    }
+    const last = points[points.length - 1];
+    ctx.lineTo(last.x, last.y);
+  }
+
+  function drawBackgroundBoundary(time, d, points = null) {
+    const boundaryPoints = points ?? backgroundBoundaryPoints(time);
+    const levelAmount = clamp((displayDifficultyLevel() - 1) / 9, 0, 1);
     ctx.save();
     ctx.globalCompositeOperation = "screen";
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     ctx.beginPath();
-    for (let y = -gap; y <= state.height + gap; y += gap) {
-      const guideX = backgroundBoundaryGuideX(y, time);
-      const x = previousX === null ? guideX : previousX * 0.74 + guideX * 0.26;
-      previousX = x;
-      if (y <= -gap + 0.1) {
-        ctx.moveTo(x, y);
-      } else {
-        ctx.lineTo(x, y);
-      }
-    }
-    ctx.shadowColor = colorWithAlpha(boundaryTone, 0.12);
-    ctx.shadowBlur = 5 + d * 2;
-    ctx.strokeStyle = colorWithAlpha(boundaryTone, 0.09 + d * 0.018 + highFlow * 0.006);
-    ctx.lineWidth = 3.6 + d * 0.8;
+    traceBackgroundBoundary(boundaryPoints);
+    ctx.shadowColor = colorWithAlpha("#ffffff", 0.11);
+    ctx.shadowBlur = 3 + levelAmount * 2;
+    ctx.strokeStyle = colorWithAlpha(boundaryTone, 0.12 + levelAmount * 0.035);
+    ctx.lineWidth = 2.2 + levelAmount * 0.9;
     ctx.stroke();
     ctx.shadowBlur = 0;
-    ctx.strokeStyle = colorWithAlpha("#ffffff", 0.045 + d * 0.008);
-    ctx.lineWidth = 0.8;
+    ctx.strokeStyle = colorWithAlpha("#ffffff", 0.08 + levelAmount * 0.02);
+    ctx.lineWidth = 0.65;
     ctx.stroke();
     ctx.restore();
   }
 
   function drawBackground() {
     const time = state.visualTime;
-    const flowTime = backgroundMotionTime(time);
     const d = difficulty();
     const openAmount = state.openUntil > state.elapsed ? 0.16 : 0;
-    const rowHeight = 6;
-    const stops = 10;
+    const points = backgroundBoundaryPoints(time);
+    const blue = mixHex(backgroundPalette[0].color, openTone.light, openAmount * 0.08);
+    const pink = mixHex(backgroundPalette[1].color, openTone.light, openAmount * 0.08);
+    const pad = Math.max(24, state.width * 0.08);
 
-    for (let y = 0; y < state.height; y += rowHeight) {
-      const bandY = y + rowHeight * 0.5;
-      const vertical = state.height > 0 ? bandY / state.height : 0.5;
-      const colorA = mixHex(
-        mixHex(backgroundPalette[0].light, backgroundPalette[0].deep, 0.07 + vertical * 0.16),
-        openTone.light,
-        openAmount * 0.12,
-      );
-      const colorB = mixHex(
-        mixHex(backgroundPalette[1].light, backgroundPalette[1].deep, 0.07 + vertical * 0.17),
-        openTone.light,
-        openAmount * 0.12,
-      );
-      const gradient = ctx.createLinearGradient(0, 0, state.width, 0);
-      for (let i = 0; i <= stops; i += 1) {
-        const position = i / stops;
-        const mix = smoothstep(0.03, 0.97, backgroundMixAt(position * state.width, bandY, time));
-        gradient.addColorStop(position, mixHex(colorA, colorB, mix));
-      }
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, y, state.width, rowHeight + 1);
-    }
+    ctx.fillStyle = pink;
+    ctx.fillRect(0, 0, state.width, state.height);
 
     ctx.save();
-    ctx.globalAlpha = 0.007 + d * 0.007;
-    ctx.globalCompositeOperation = "screen";
-    for (let i = 0; i < 5; i += 1) {
-      const baseY = state.height * (0.1 + i * 0.22);
-      const phase = flowTime / (22000 + i * 3200) + i * 1.7;
-      const color = i % 2 === 0 ? backgroundPalette[0].light : backgroundPalette[1].light;
-      const thickness = 74 + d * 76 + i * 8;
-      const left = -state.width * 0.16;
-      const right = state.width * 1.16;
-      const step = Math.max(42, state.width / 6);
-      ctx.fillStyle = colorWithAlpha(color, 0.055);
-      ctx.beginPath();
-      for (let x = left; x <= right + 0.1; x += step) {
-        const topY =
-          baseY +
-          Math.sin(x * 0.006 + phase) * (30 + d * 38) +
-          Math.sin(x * 0.012 - phase * 0.55) * (10 + d * 14);
-        if (x === left) {
-          ctx.moveTo(x, topY);
-        } else {
-          ctx.lineTo(x, topY);
-        }
-      }
-      for (let x = right; x >= left - 0.1; x -= step) {
-        const bottomY =
-          baseY +
-          thickness +
-          Math.sin(x * 0.005 + phase * 0.82) * (24 + d * 34) +
-          Math.sin(x * 0.011 - phase * 0.47) * (8 + d * 12);
-        ctx.lineTo(x, bottomY);
-      }
-      ctx.closePath();
-      ctx.fill();
-    }
+    ctx.beginPath();
+    traceBackgroundBoundary(points);
+    ctx.lineTo(-pad, state.height + pad);
+    ctx.lineTo(-pad, -pad);
+    ctx.closePath();
+    ctx.fillStyle = blue;
+    ctx.fill();
     ctx.restore();
 
-    const stage = backgroundFlowStage();
-    if (stage > 0) {
-      ctx.save();
-      ctx.translate(state.width * 0.5, state.height * 0.5);
-      ctx.rotate((flowTime / (138000 - stage * 11000)) * (0.6 + stage * 0.08));
-      ctx.globalAlpha = 0.004 + stage * 0.0025;
-      ctx.globalCompositeOperation = "screen";
-      const span = Math.max(state.width, state.height) * 1.55;
-      for (let i = 0; i < 3; i += 1) {
-        const offset = (i - 1) * span * 0.28 + Math.sin(flowTime / (42000 + i * 7200)) * span * 0.06;
-      const color = i % 2 === 0 ? backgroundPalette[0].light : backgroundPalette[1].light;
-        const gradient = ctx.createLinearGradient(-span * 0.5, offset, span * 0.5, offset + span * 0.2);
-        gradient.addColorStop(0, colorWithAlpha(color, 0));
-        gradient.addColorStop(0.45, colorWithAlpha(color, 0.07));
-        gradient.addColorStop(1, colorWithAlpha(color, 0));
-        ctx.fillStyle = gradient;
-        ctx.beginPath();
-        ctx.moveTo(-span, offset - span * 0.08);
-        for (let x = -span; x <= span; x += span / 6) {
-          const y = offset + Math.sin(x * 0.004 + flowTime / (35000 + i * 4800)) * (22 + stage * 8);
-          ctx.lineTo(x, y);
-        }
-        ctx.lineTo(span, offset + span * 0.18);
-        ctx.lineTo(-span, offset + span * 0.08);
-        ctx.closePath();
-        ctx.fill();
-      }
-      ctx.restore();
-    }
-
-    ctx.save();
-    ctx.globalAlpha = 0.005 + d * 0.006;
-    ctx.globalCompositeOperation = "screen";
-    for (let i = 0; i < 3; i += 1) {
-      const centerX =
-        state.width * (0.2 + i * 0.3) +
-        Math.sin(flowTime / (15000 + i * 2600) + i * 1.4) * state.width * 0.16;
-      const width = state.width * (0.54 + d * 0.16);
-      const left = centerX - width * 0.5;
-      const right = centerX + width * 0.5;
-      const gradient = ctx.createLinearGradient(left, 0, right, 0);
-      const color = i % 2 === 0 ? backgroundPalette[1].light : backgroundPalette[0].light;
-      const step = Math.max(54, state.height / 8);
-      gradient.addColorStop(0, colorWithAlpha(color, 0));
-      gradient.addColorStop(0.5, colorWithAlpha(color, 0.07));
-      gradient.addColorStop(1, colorWithAlpha(color, 0));
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.moveTo(left, -20);
-      for (let y = -20; y <= state.height + 20; y += step) {
-        const x = left + Math.sin(y * 0.006 + flowTime / (17000 + i * 1500) + i) * state.width * 0.08;
-        ctx.lineTo(x, y);
-      }
-      for (let y = state.height + 20; y >= -20; y -= step) {
-        const x =
-          right +
-          Math.sin(y * 0.006 + flowTime / (18400 + i * 1700) + i * 1.6) * state.width * 0.08;
-        ctx.lineTo(x, y);
-      }
-      ctx.closePath();
-      ctx.fill();
-    }
-    ctx.restore();
-
-    drawBackgroundBoundary(time, d);
+    drawBackgroundBoundary(time, d, points);
   }
 
   function drawHints() {
@@ -2386,6 +2838,25 @@
     return true;
   }
 
+  function drawBombTexture(bubble, x, y, r, alpha = 1) {
+    if (!bombBubbleImage.complete || bombBubbleImage.naturalWidth <= 0) return false;
+    const aspect = bombBubbleImage.naturalHeight / bombBubbleImage.naturalWidth;
+    const drawWidth = r * 2.62;
+    const drawHeight = drawWidth * aspect;
+    const bodyCenterY = drawHeight * 0.64;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.sin(bubble.wobble * 0.8) * 0.06 + bubble.spin * 0.035);
+    ctx.globalAlpha *= alpha;
+    ctx.shadowColor = colorWithAlpha(bombTone.light, 0.38);
+    ctx.shadowBlur = r * 0.55;
+    ctx.drawImage(bombBubbleImage, -drawWidth * 0.5, -bodyCenterY, drawWidth, drawHeight);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+    return true;
+  }
+
   function drawBubble(bubble) {
     if (bubble.age < 0) {
       return;
@@ -2476,11 +2947,14 @@
       ctx.restore();
     }
 
-    if (!drawBubbleSpriteBody(bubble, color, x, y, r, whiteAlpha)) {
-      drawProceduralBubbleBody(body, color, x, y, r);
+    const bombTextured = bubble.isBomb && drawBombTexture(bubble, x, y, r, whiteAlpha);
+    if (!bombTextured) {
+      if (!drawBubbleSpriteBody(bubble, color, x, y, r, whiteAlpha)) {
+        drawProceduralBubbleBody(body, color, x, y, r);
+      }
     }
 
-    if (bubble.isBomb) {
+    if (bubble.isBomb && !bombTextured) {
       drawBombMark(x, y, r);
     } else if (bubble.isBleach) {
       drawBleachMark(x, y, r);
@@ -2698,6 +3172,19 @@
     ctx.restore();
   }
 
+  function drawBuildVersion() {
+    ctx.save();
+    ctx.font = "800 9px \"Arial Rounded MT Bold\", \"PingFang SC\", \"Microsoft YaHei UI\", ui-rounded, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.lineWidth = 2.4;
+    ctx.strokeStyle = "rgba(20, 48, 66, 0.34)";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.72)";
+    ctx.strokeText(buildVersion, state.width * 0.5, state.height - 8);
+    ctx.fillText(buildVersion, state.width * 0.5, state.height - 8);
+    ctx.restore();
+  }
+
   function drawDifficultyBurst() {
     if (state.difficultyFlash <= 0) return;
     const t = 1 - state.difficultyFlash;
@@ -2732,7 +3219,6 @@
 
   function draw() {
     drawBackground();
-    drawHints();
     drawWaterSurface();
     state.bubbles.forEach(drawBubble);
     drawRipples();
@@ -2740,6 +3226,7 @@
     drawParticles();
     drawFloaters();
     drawDifficultyBurst();
+    drawBuildVersion();
     drawFlash();
   }
 
@@ -2952,6 +3439,70 @@
     }, 1540);
   }
 
+  function setBackgroundToLevel(level) {
+    const flow = state.backgroundFlow;
+    const layout = makeBackgroundLayout(level, Math.max(0, level * 2));
+    flow.phase = "hold";
+    flow.elapsed = 0;
+    flow.step = Math.max(flow.step, level * 2);
+    flow.current = layout;
+    flow.from = layout;
+    flow.target = layout;
+    Object.assign(flow, backgroundTimingForLevel(level));
+  }
+
+  function updateDebugPanel() {
+    if (!debugStageInfo) return;
+    const plan = state.stagePlan;
+    if (debugLevelSelect && document.activeElement !== debugLevelSelect) {
+      debugLevelSelect.value = String(displayDifficultyLevel());
+    }
+    debugStageInfo.textContent = plan
+      ? `hit ${state.stageCorrectPops}/${plan.targetBubbles} miss ${state.stageMissedTargets} wrong ${state.stageWrongPops} spawn ${state.stageSpawned}/${plan.totalBubbles}`
+      : "-";
+  }
+
+  function jumpToDebugLevel(level) {
+    const targetLevel = Math.max(1, Math.round(level));
+    if (!state.running) {
+      resetGame();
+    }
+    clearRuntimeEffects();
+    resetCombo();
+    state.elapsed = Math.max(0, (targetLevel - 1) * stageDurationMs);
+    state.water = 76;
+    state.waterPressure = 0;
+    state.difficultyTier = Math.max(0, targetLevel - 1);
+    state.nextPowerAt = state.elapsed + 26000;
+    state.nextSpawnAt = state.elapsed + 120;
+    state.openUntil = 0;
+    resetBombComboTimer();
+    resetStagePlan(targetLevel);
+    setBackgroundToLevel(targetLevel);
+    curtain.classList.add("hidden");
+    updateHud();
+    draw();
+    scheduleLoop();
+  }
+
+  function initDebugControls() {
+    if (!debugLevelSelect || !debugJumpButton) return;
+    if (debugLevelSelect.options.length === 0) {
+      for (let level = 1; level <= 12; level += 1) {
+        const option = document.createElement("option");
+        option.value = String(level);
+        option.textContent = `Lv ${level}`;
+        debugLevelSelect.append(option);
+      }
+    }
+    debugJumpButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      jumpToDebugLevel(Number(debugLevelSelect.value || 1));
+    });
+    updateDebugPanel();
+  }
+
   startButton.addEventListener("click", playStartTransition);
   clearSkillButton.addEventListener("click", (event) => {
     event.preventDefault();
@@ -2994,6 +3545,7 @@
   });
 
   resize();
+  initDebugControls();
   updateHud();
   draw();
   updatePerfDebug(performance.now(), true);

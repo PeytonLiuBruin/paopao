@@ -573,24 +573,6 @@ body {
   opacity: 0;
 }
 
-.perf-debug {
-  position: absolute;
-  z-index: 6;
-  right: 8px;
-  bottom: calc(8px + var(--safe-bottom));
-  padding: 3px 6px;
-  border-radius: 6px;
-  color: rgba(255, 255, 255, 0.88);
-  background: rgba(12, 38, 58, 0.26);
-  font-size: 9px;
-  font-weight: 800;
-  line-height: 1.2;
-  pointer-events: none;
-  font-variant-numeric: tabular-nums;
-  -webkit-text-stroke: 0.6px rgba(15, 33, 43, 0.65);
-  paint-order: stroke fill;
-}
-
 .start-transition::before {
   position: absolute;
   inset: -18%;
