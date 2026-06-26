@@ -3,7 +3,7 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false });
-  const buildVersion = "v2026.06.26-pacecurve";
+  const buildVersion = "v2026.06.26-drainbleach";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -67,6 +67,8 @@
   const comboMinWindow = 1450;
   const decolorDuration = 4200;
   const decolorWarningMs = 1500;
+  const bleachRequiredHits = 3;
+  const bleachLifetimeMs = 5000;
   const fairMatchDwell = 2;
   const clearSkillMaxUses = 3;
   const edgeCycle = ["left", "right", "bottom", "top"];
@@ -248,13 +250,13 @@
 
   function targetCorrectRateForLevel(level) {
     return clamp(
-      0.52 +
-        (level - 1) * 0.023 +
+      0.53 +
+        (level - 1) * 0.027 +
         smoothstep(2, 8, level) * 0.075 +
-        smoothstep(9, 18, level) * 0.05 +
-        smoothstep(18, 30, level) * 0.025,
-      0.52,
-      0.97,
+        smoothstep(8, 16, level) * 0.06 +
+        smoothstep(16, 28, level) * 0.025,
+      0.53,
+      0.98,
     );
   }
 
@@ -266,14 +268,21 @@
   }
 
   function levelWaterDrainRate(level) {
-    const p = clamp((level - 1) / 18, 0, 1);
-    return 0.16 + p * 0.58 + smoothstep(10, 30, level) * 0.42;
+    const p = clamp((level - 1) / 16, 0, 1);
+    return clamp(
+      0.18 +
+        p * 0.88 +
+        smoothstep(2, 8, level) * 0.24 +
+        smoothstep(8, 16, level) * 0.18,
+      0.18,
+      1.34,
+    );
   }
 
   function stageWaterBudgetForLevel(level) {
     const targetBubbles = Math.max(1, Math.round(bubbleCountForLevel(level) * targetCorrectRateForLevel(level)));
-    const sustain = level <= 3 ? 1.18 : level <= 8 ? 1.06 : level <= 15 ? 0.98 : 0.9;
-    const perTargetFloor = level <= 3 ? 0.18 : level <= 8 ? 0.1 : 0.055;
+    const sustain = level <= 3 ? 1.16 : level <= 8 ? 1.03 : level <= 15 ? 0.92 : 0.88;
+    const perTargetFloor = level <= 3 ? 0.16 : level <= 8 ? 0.085 : 0.052;
     return levelWaterDrainRate(level) * (stageDurationMs / 1000) * sustain + targetBubbles * perTargetFloor;
   }
 
@@ -593,6 +602,43 @@
       vx: (dx / length) * speed + rand(-noise, noise),
       vy: (dy / length) * speed + rand(-noise, noise),
     };
+  }
+
+  function bleachExitTarget(edge, radius, fromX, fromY) {
+    const margin = Math.max(64, radius * 2.6);
+    if (edge === "left") return { x: state.width + margin, y: clamp(fromY + rand(-state.height * 0.18, state.height * 0.18), margin, state.height - margin) };
+    if (edge === "right") return { x: -margin, y: clamp(fromY + rand(-state.height * 0.18, state.height * 0.18), margin, state.height - margin) };
+    if (edge === "top") return { x: clamp(fromX + rand(-state.width * 0.18, state.width * 0.18), margin, state.width - margin), y: state.height + margin };
+    return { x: clamp(fromX + rand(-state.width * 0.18, state.width * 0.18), margin, state.width - margin), y: -margin };
+  }
+
+  function randomBleachDashTarget(bubble, forceExit = false) {
+    const margin = Math.max(58, bubble.baseRadius * 2.2);
+    if (forceExit) {
+      const edge = edgeCycle[Math.floor(rand(0, edgeCycle.length))];
+      return pointFromEdge(edge, bubble.baseRadius, edge === "left" || edge === "right" ? rand(margin, state.height - margin) : rand(margin, state.width - margin));
+    }
+    const minDash = Math.min(state.width, state.height) * 0.38;
+    let target = { x: rand(margin, state.width - margin), y: rand(Math.max(112, margin), state.height - margin) };
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      target = { x: rand(margin, state.width - margin), y: rand(Math.max(112, margin), state.height - margin) };
+      if (Math.hypot(target.x - bubble.x, target.y - bubble.y) >= minDash) break;
+    }
+    return target;
+  }
+
+  function setBleachDash(bubble, forceExit = false) {
+    const d = difficulty();
+    const target = randomBleachDashTarget(bubble, forceExit);
+    const speed = forceExit ? rand(260 + d * 60, 340 + d * 80) : rand(210 + d * 52, 292 + d * 64);
+    const velocity = aimedVelocity(bubble.x, bubble.y, target, speed, 8);
+    bubble.vx = velocity.vx;
+    bubble.vy = velocity.vy;
+    bubble.steerTarget = target;
+    bubble.retargetAt = bubble.age + rand(0.48, 0.82);
+    bubble.wobbleSpeed = rand(2.1, 3.2);
+    bubble.drift = rand(-0.12, 0.12);
+    bubble.bleachEscaping = forceExit;
   }
 
   function pickBalancedColorIndex() {
@@ -930,7 +976,8 @@
   function baseWaterDrainRate() {
     const level = displayDifficultyLevel();
     const p = clamp((level - 1) / 18, 0, 1);
-    return levelWaterDrainRate(level) + smoothstep(0.55, 1, stageCompletion()) * (0.06 + p * 0.16);
+    const stageTension = smoothstep(0.55, 1, stageCompletion()) * (0.06 + p * 0.16);
+    return clamp(levelWaterDrainRate(level) + stageTension, 0.18, 1.48);
   }
 
   function waterPressureHorizon() {
@@ -966,7 +1013,7 @@
 
   function waterOpportunityValue(bubble) {
     if (bubble.isClear) return 8;
-    if (bubble.isBleach) return 5.4;
+    if (bubble.isBleach) return 3.6;
     if (bubble.isBomb) return 4.2;
     if (bubble.isWhite) return bubble.baseRadius <= 27 || bubble.isStream ? 1.4 : 2.2;
     return bubble.waterValue ?? (bubble.baseRadius <= 27 ? 3.7 : 5.35);
@@ -1081,8 +1128,8 @@
       forcedSize === "small" ||
       (forcedSize !== "normal" && (forceSmall || (d > 0.58 && Math.random() < (d - 0.42) * 0.34)));
     const radiusKind = forcedSize === "large" ? "large" : smallWave ? "small" : "normal";
-    const radius = options.radius ?? radiusForDifficulty(d, radiusKind);
-    const speed = options.speed ?? rand(24 + d * 18, 50 + d * 42);
+    const radius = options.radius ?? (isBleach ? radiusForDifficulty(d, "normal") * rand(0.9, 1.04) : radiusForDifficulty(d, radiusKind));
+    const speed = options.speed ?? (isBleach ? rand(74 + d * 18, 104 + d * 26) : rand(24 + d * 18, 50 + d * 42));
     let x;
     let y;
 
@@ -1109,13 +1156,15 @@
     const spriteIndex = options.spriteIndex ?? pickBubbleSprite(spriteColorIndex, radius, smallWave);
     const target =
       options.target ??
-      (kind === "normal"
+      (isBleach
+        ? bleachExitTarget(edge, radius, x, y)
+        : kind === "normal"
         ? matchingPointForColorFromEdge(colorIndex, edge, y, x)
         : {
             x: rand(state.width * 0.24, state.width * 0.76),
             y: rand(state.height * 0.24, state.height * 0.72),
           });
-    const velocity = options.velocity ?? aimedVelocity(x, y, target, speed, kind === "normal" ? 12 : 26);
+    const velocity = options.velocity ?? aimedVelocity(x, y, target, speed, isBleach ? 6 : kind === "normal" ? 12 : 26);
     const bubble = {
       x,
       y,
@@ -1136,6 +1185,11 @@
       isClear,
       isBleach,
       isBomb,
+      bleachHits: 0,
+      bleachRequiredHits,
+      bleachExpireAt: isBleach ? state.elapsed + bleachLifetimeMs : 0,
+      bleachHitCooldownUntil: 0,
+      bleachEscaping: false,
       isWhite: Boolean(options.isWhite),
       whiteUntil: options.whiteUntil ?? 0,
       restoreState: null,
@@ -2145,6 +2199,51 @@
     }
   }
 
+  function hitBleachBubble(bubble, index, hitX, hitY) {
+    if (state.elapsed < (bubble.bleachHitCooldownUntil ?? 0)) return;
+    bubble.bleachHitCooldownUntil = state.elapsed + 140;
+    bubble.bleachHits = Math.min((bubble.bleachHits ?? 0) + 1, bubble.bleachRequiredHits ?? bleachRequiredHits);
+    registerCombo();
+
+    const remaining = Math.max(0, (bubble.bleachRequiredHits ?? bleachRequiredHits) - bubble.bleachHits);
+    if (remaining > 0) {
+      bubble.baseRadius = Math.max(18, bubble.baseRadius * 0.76);
+      bubble.radius = bubble.baseRadius;
+    }
+
+    state.flash = Math.max(state.flash, remaining > 0 ? 0.12 : 0.24);
+    state.ripples.push({
+      x: bubble.x,
+      y: bubble.y,
+      radius: bubble.radius * 0.46,
+      age: 0,
+      life: 0.22,
+      color: whiteTone.light,
+      power: remaining > 0 ? 0.62 : 0.86,
+    });
+    makePunctureSplash(bubble, hitX, hitY, whiteTone, remaining > 0 ? 9 : 18, bubble.baseRadius <= 27, false);
+
+    if (remaining > 0) {
+      setBleachDash(bubble, false);
+      makeFloatText(bubble.x, bubble.y - bubble.radius, `${bubble.bleachHits}/3`, whiteTone.light, 0.94);
+      comboFeedbackAt(bubble.x, bubble.y, whiteTone);
+      vibratePop(10);
+      playPop("small");
+      updateHud();
+      return;
+    }
+
+    state.bubbles.splice(index, 1);
+    state.poppedCount += 1;
+    state.score += 1;
+    addWater(3.6);
+    decolorBubbles(bubble);
+    comboFeedbackAt(bubble.x, bubble.y, whiteTone);
+    vibratePop(16);
+    playPop("clear");
+    updateHud();
+  }
+
   function popBubble(bubble, index, hitX = bubble.x, hitY = bubble.y) {
     const isOpen = state.openUntil > state.elapsed;
     const isSmall = bubble.baseRadius <= 27 || bubble.isStream;
@@ -2159,6 +2258,12 @@
       : bubble.isSuper || bubble.colorIndex === -1
         ? openTone
         : palette[bubble.colorIndex];
+
+    if (bubble.isBleach) {
+      hitBleachBubble(bubble, index, hitX, hitY);
+      return;
+    }
+
     state.bubbles.splice(index, 1);
     state.poppedCount += 1;
     registerCombo();
@@ -2169,17 +2274,6 @@
       activateClearScreen(bubble);
       comboFeedbackAt(bubble.x, bubble.y, clearTone);
       vibratePop(24);
-      playPop("clear");
-      updateHud();
-      return;
-    }
-
-    if (bubble.isBleach) {
-      state.score += 1;
-      addWater(5.4);
-      decolorBubbles(bubble);
-      comboFeedbackAt(bubble.x, bubble.y, whiteTone);
-      vibratePop(16);
       playPop("clear");
       updateHud();
       return;
@@ -2556,6 +2650,25 @@
       bubble.age += dt;
       if (bubble.age < 0) {
         continue;
+      }
+      if (bubble.isBleach) {
+        const expireAt = bubble.bleachExpireAt || state.elapsed + bleachLifetimeMs;
+        if (!bubble.bleachEscaping && state.elapsed >= expireAt - 950) {
+          setBleachDash(bubble, true);
+        }
+        if (state.elapsed >= expireAt) {
+          state.ripples.push({
+            x: bubble.x,
+            y: bubble.y,
+            radius: bubble.radius * 0.48,
+            age: 0,
+            life: 0.24,
+            color: whiteTone.light,
+            power: 0.5,
+          });
+          state.bubbles.splice(i, 1);
+          continue;
+        }
       }
       if (bubble.isWhite && bubble.whiteUntil > 0 && state.elapsed >= bubble.whiteUntil) {
         restoreDecoloredBubble(bubble);
