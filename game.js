@@ -3,7 +3,7 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false });
-  const buildVersion = "v2026.06.26-drainbleach";
+  const buildVersion = "1.0.21";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -30,7 +30,7 @@
   bleachBubbleImage.src = "./assets/bleach-bubble.png";
   const bubbleSpriteCell = 192;
   const bubbleSpriteCols = 5;
-  const targetFrameMs = 1000 / 30;
+  const targetFrameMs = 1000 / 40;
   const maxActiveBubbles = 10;
   const maxParticles = 72;
   const maxRipples = 32;
@@ -93,6 +93,7 @@
     visualTime: 0,
     elapsed: 0,
     score: 0,
+    correctBubbleCount: 0,
     poppedCount: 0,
     water: 76,
     waterPressure: 0,
@@ -235,8 +236,7 @@
   function updatePerfDebug(now = performance.now(), force = false) {
     if (!perfDebug || (!force && now - perfLastUpdate < debugUpdateMs)) return;
     perfLastUpdate = now;
-    const domCount = document.body.getElementsByTagName("*").length;
-    perfDebug.textContent = `FPS ${Math.round(perfFps)} | B ${state.bubbles.length}/${maxActiveBubbles} | P ${state.particles.length} | DOM ${domCount}`;
+    perfDebug.textContent = `FPS ${Math.round(perfFps || 0)}`;
   }
 
   function scheduleLoop() {
@@ -250,12 +250,12 @@
 
   function targetCorrectRateForLevel(level) {
     return clamp(
-      0.53 +
-        (level - 1) * 0.027 +
-        smoothstep(2, 8, level) * 0.075 +
-        smoothstep(8, 16, level) * 0.06 +
-        smoothstep(16, 28, level) * 0.025,
-      0.53,
+      0.55 +
+        (level - 1) * 0.03 +
+        smoothstep(2, 7, level) * 0.09 +
+        smoothstep(7, 13, level) * 0.07 +
+        smoothstep(13, 24, level) * 0.02,
+      0.55,
       0.98,
     );
   }
@@ -268,14 +268,14 @@
   }
 
   function levelWaterDrainRate(level) {
-    const p = clamp((level - 1) / 16, 0, 1);
+    const p = clamp((level - 1) / 14, 0, 1);
     return clamp(
-      0.18 +
-        p * 0.88 +
-        smoothstep(2, 8, level) * 0.24 +
-        smoothstep(8, 16, level) * 0.18,
-      0.18,
-      1.34,
+      0.46 +
+        p * 0.78 +
+        smoothstep(1, 5, level) * 0.28 +
+        smoothstep(5, 11, level) * 0.2,
+      0.46,
+      1.72,
     );
   }
 
@@ -286,15 +286,37 @@
     return levelWaterDrainRate(level) * (stageDurationMs / 1000) * sustain + targetBubbles * perTargetFloor;
   }
 
+  function averageBubbleMissPenaltyForLevel(level) {
+    const p = clamp((level - 1) / 14, 0, 1);
+    return clamp(
+      0.62 +
+        p * 1.18 +
+        smoothstep(2, 8, level) * 0.34 +
+        smoothstep(7, 16, level) * 0.22,
+      0.62,
+      2.36,
+    );
+  }
+
   function stageTypeWeights(level) {
     const cappedLevel = Math.min(level, 10);
+    if (level <= 1) {
+      return {
+        bigRise: 0.3,
+        bigSide: 0.24,
+        normal: 0.46,
+        crossArc: 0,
+        machine: 0,
+        sGroup: 0,
+      };
+    }
     const weights = {
-      bigRise: level <= 2 ? 0.28 : level <= 7 ? 0.16 : 0.1,
-      bigSide: level <= 3 ? 0.24 : level <= 7 ? 0.16 : 0.11,
-      normal: level <= 2 ? 0.34 : level <= 6 ? 0.24 : 0.16,
-      crossArc: level >= 2 ? 0.14 + cappedLevel * 0.014 : 0,
+      bigRise: level <= 3 ? 0.16 : level <= 7 ? 0.13 : 0.09,
+      bigSide: level <= 3 ? 0.14 : level <= 7 ? 0.13 : 0.1,
+      normal: level <= 3 ? 0.24 : level <= 6 ? 0.2 : 0.15,
+      crossArc: level >= 2 ? 0.24 + cappedLevel * 0.018 : 0,
       machine: level >= 3 ? 0.14 + cappedLevel * 0.016 : 0,
-      sGroup: level >= 4 ? 0.12 + cappedLevel * 0.016 : 0,
+      sGroup: level >= 2 ? 0.1 + cappedLevel * 0.014 : 0,
     };
     return weights;
   }
@@ -303,14 +325,26 @@
     const totalBubbles = bubbleCountForLevel(level);
     const correctRate = targetCorrectRateForLevel(level);
     const targetBubbles = Math.max(1, Math.round(totalBubbles * correctRate));
-    const totalWater = stageWaterBudgetForLevel(level);
+    const naturalDrainBudget = levelWaterDrainRate(level) * (stageDurationMs / 1000) * 1.06;
+    const baseMissPenalty = averageBubbleMissPenaltyForLevel(level);
+    const rewardCap = clamp(2.35 - smoothstep(4, 15, level) * 0.72, 1.42, 2.35);
+    const baseCorrectWater = clamp(
+      (naturalDrainBudget / totalBubbles + (1 - correctRate) * baseMissPenalty) / correctRate,
+      0.16,
+      rewardCap,
+    );
+    const baseWrongPenalty = baseMissPenalty * (1.58 + smoothstep(3, 12, level) * 0.28);
+    const totalWater = baseCorrectWater * targetBubbles;
     return {
       level,
       totalBubbles,
       targetBubbles,
       correctRate,
       totalWater,
-      perTargetWater: totalWater / targetBubbles,
+      perTargetWater: baseCorrectWater,
+      baseCorrectWater,
+      baseMissPenalty,
+      baseWrongPenalty,
       weights: stageTypeWeights(level),
     };
   }
@@ -352,29 +386,6 @@
   }
 
   function applyStageAccuracyGate() {
-    const plan = state.stagePlan;
-    if (!plan) return true;
-    const deficit = Math.max(0, plan.targetBubbles - state.stageCorrectPops);
-    if (deficit <= 0) return true;
-
-    const deficitRatio = deficit / Math.max(1, plan.targetBubbles);
-    const levelPressure = clamp((displayDifficultyLevel() - 1) / 18, 0, 1);
-    const penalty = clamp(8 + deficitRatio * 28 + levelPressure * 12, 8, 42);
-    state.water = Math.max(0, state.water - penalty);
-    state.waterPressure = Math.min(waterPressureCap, state.waterPressure + penalty * (1.1 + levelPressure * 0.35));
-    waterDrainUntil = state.elapsed + 560;
-    state.flash = Math.max(state.flash, 0.24 + deficitRatio * 0.22);
-    makeFloatText(
-      state.width * 0.5,
-      state.height * 0.42,
-      `正确率不足 -${Math.round(penalty)}%`,
-      "#ffffff",
-      0.9,
-    );
-    if (state.water <= 0) {
-      endGame();
-      return false;
-    }
     return true;
   }
 
@@ -385,7 +396,6 @@
     }
     const minimumStageTime = stageDurationMs * 0.78;
     if (stageRemainingBubbles() > 0 || activeStageTargetCount() > 0 || stageElapsedMs() < minimumStageTime) return;
-    if (!applyStageAccuracyGate()) return;
     const nextLevel = state.stageLevel + 1;
     triggerDifficultyUp(nextLevel - 1);
     resetStagePlan(nextLevel);
@@ -670,26 +680,43 @@
     return waterBudgetRounds[Math.min(state.waterRoundIndex, waterBudgetRounds.length - 1)];
   }
 
-  function nextBubbleWaterValue() {
+  function bubbleDifficultyValueWeight(radius, speed, options = {}) {
+    const sizeWeight = clamp(42 / Math.max(16, radius), 0.68, 1.52);
+    const speedWeight = clamp(speed / 88, 0.62, 1.58);
+    const streamWeight = options.isStream ? 1.08 : 1;
+    const largeEase = radius >= 56 ? 0.9 : 1;
+    const smallPressure = radius <= 26 ? 1.08 : 1;
+    return clamp((sizeWeight * 0.56 + speedWeight * 0.44) * streamWeight * largeEase * smallPressure, 0.58, 1.82);
+  }
+
+  function nextBubbleWaterProfile(radius, speed, options = {}) {
     const level = displayDifficultyLevel();
     if (!state.stagePlan || state.stagePlan.level !== level) {
       resetStagePlan(level);
     }
     const plan = state.stagePlan;
-    const value = plan.perTargetWater;
+    const weight = bubbleDifficultyValueWeight(radius, speed, options);
+    const waterValue = clamp(plan.baseCorrectWater * (0.72 + weight * 0.26), 0.1, 2.45);
+    const missPenalty = clamp(plan.baseMissPenalty * (0.72 + weight * 0.3), 0.22, 3.35);
+    const wrongPenalty = clamp(plan.baseWrongPenalty * (0.76 + weight * 0.34), missPenalty * 1.28, 5.25);
     state.waterRoundSpawned += 1;
     state.waterOpportunityCount += 1;
     state.stageTargetSpawned += 1;
-    return value;
+    return {
+      waterValue,
+      missPenalty,
+      wrongPenalty,
+      difficultyWeight: weight,
+    };
   }
 
   function comboWaterBoost(base) {
     if (state.combo <= 1) return 0;
-    return base * Math.min(0.35, (state.combo - 1) * 0.018);
+    return base * Math.min(0.24, (state.combo - 1) * 0.013);
   }
 
   function comboWaterBonus() {
-    return Math.min(1.2, Math.floor(Math.max(0, state.combo - 1) / 5) * 0.24);
+    return Math.min(0.8, Math.floor(Math.max(0, state.combo - 1) / 5) * 0.16);
   }
 
   function comboScoreBonus() {
@@ -741,7 +768,24 @@
       state.clearSkillCharge = 0;
       return;
     }
+    if (state.clearSkillCharge >= 1) return;
     state.clearSkillCharge = clamp(state.clearSkillCharge + amount, 0, 1);
+  }
+
+  function clearSkillChargeForBubble(bubble) {
+    if (!bubble) return 0.01;
+    return bubble.baseRadius <= 30 ? 0.005 : 0.01;
+  }
+
+  function chargeClearSkillByBubble(bubble) {
+    if (state.clearSkillUses <= 0) return;
+    chargeClearSkill(clearSkillChargeForBubble(bubble));
+  }
+
+  function chargeClearSkillByBubbles(bubbles) {
+    if (!bubbles?.length || state.clearSkillUses <= 0) return;
+    const amount = bubbles.reduce((sum, bubble) => sum + clearSkillChargeForBubble(bubble), 0);
+    chargeClearSkill(amount);
   }
 
   function registerCombo({ chargeSkill = true } = {}) {
@@ -753,9 +797,6 @@
     state.comboPulse = 1;
     state.comboUntil = state.elapsed + comboWindow();
     if (chargeSkill) {
-      if (state.combo > 1) {
-        chargeClearSkill(0.012 + Math.min(0.018, state.combo * 0.002));
-      }
       state.bombComboProgress += 1;
       if (state.combo >= 14 && state.bombComboProgress >= state.bombComboTarget) {
         if (spawnComboBomb()) {
@@ -846,7 +887,7 @@
       : state.combo > 1
         ? `x${state.combo}`
         : "";
-    scoreEl.textContent = String(state.score);
+    scoreEl.textContent = String(state.correctBubbleCount);
     timeEl.textContent = formatTime(state.elapsed);
     if (difficultyEl) {
       difficultyEl.textContent = `Lv ${displayDifficultyLevel()}`;
@@ -865,6 +906,7 @@
     state.lastTime = performance.now();
     state.elapsed = 0;
     state.score = 0;
+    state.correctBubbleCount = 0;
     state.poppedCount = 0;
     state.water = 76;
     lastHudWater = null;
@@ -977,7 +1019,7 @@
     const level = displayDifficultyLevel();
     const p = clamp((level - 1) / 18, 0, 1);
     const stageTension = smoothstep(0.55, 1, stageCompletion()) * (0.06 + p * 0.16);
-    return clamp(levelWaterDrainRate(level) + stageTension, 0.18, 1.48);
+    return clamp(levelWaterDrainRate(level) + stageTension, 0.46, 1.86);
   }
 
   function waterPressureHorizon() {
@@ -1005,7 +1047,7 @@
     const highWater = softCap ? smoothstep(70, 96, state.water) : 0;
     const lowHelp = softCap ? smoothstep(34, 10, state.water) * 0.08 : 0;
     const highDifficulty = smoothstep(4, 16, displayDifficultyLevel());
-    const multiplier = clamp(1 + lowHelp - highWater * (0.34 + highDifficulty * 0.16), 0.44, 1.08);
+    const multiplier = clamp(1 + lowHelp - highWater * (0.4 + highDifficulty * 0.2), 0.38, 1.06);
     const applied = amount * multiplier;
     state.water = Math.min(100, state.water + applied);
     return applied;
@@ -1030,6 +1072,7 @@
   function recordStageCorrect(bubble) {
     if (!state.stagePlan || !bubble) return;
     if (bubble.colorIndex < 0 || bubble.isWhite || (bubble.waterValue ?? 0) <= 0) return;
+    state.correctBubbleCount += 1;
     state.stageCorrectPops = Math.min(state.stageCorrectPops + 1, state.stagePlan.totalBubbles);
   }
 
@@ -1038,6 +1081,10 @@
   }
 
   function stageMistakePenalty(type, bubble) {
+    if (bubble) {
+      const value = type === "wrong" ? bubble.wrongPenalty : bubble.missPenalty;
+      if (Number.isFinite(value) && value > 0) return value;
+    }
     const level = displayDifficultyLevel();
     const p = clamp((level - 1) / 18, 0, 1);
     const late = smoothstep(10, 26, level);
@@ -1151,7 +1198,15 @@
     }
 
     const colorIndex = kind === "normal" ? (options.colorIndex ?? pickBalancedColorIndex()) : -1;
-    const waterValue = kind === "normal" ? (options.waterValue ?? nextBubbleWaterValue()) : 0;
+    const waterProfile =
+      kind === "normal"
+        ? options.waterProfile ?? nextBubbleWaterProfile(radius, speed, {
+            isStream: options.isStream,
+            sizeKind: radiusKind,
+            streamPattern: options.streamPattern,
+          })
+        : { waterValue: 0, missPenalty: 0, wrongPenalty: 0, difficultyWeight: 1 };
+    const waterValue = kind === "normal" ? (options.waterValue ?? waterProfile.waterValue) : 0;
     const spriteColorIndex = colorIndex >= 0 ? colorIndex : pickColorIndex();
     const spriteIndex = options.spriteIndex ?? pickBubbleSprite(spriteColorIndex, radius, smallWave);
     const target =
@@ -1180,6 +1235,9 @@
       radius,
       baseRadius: radius,
       waterValue,
+      missPenalty: waterProfile.missPenalty ?? 0,
+      wrongPenalty: waterProfile.wrongPenalty ?? 0,
+      difficultyWeight: waterProfile.difficultyWeight ?? 1,
       colorIndex,
       isSuper,
       isClear,
@@ -1296,7 +1354,7 @@
   function spawnBubbleStream(d) {
     const edge = pickSpawnEdge();
     const streamLevel = displayDifficultyLevel();
-    const sameColorStream = streamLevel < 5;
+    const sameColorStream = streamLevel <= 1;
     const streamColorIndex = sameColorStream ? pickBalancedColorIndex() : null;
     const pattern = sameColorStream ? "spray" : d > 0.38 && Math.random() < 0.46 + d * 0.2 ? "zigzag" : "spray";
     const desiredCount =
@@ -1360,6 +1418,8 @@
         streamPhase: pulse * 0.72 + lane * 0.42,
         streamAmplitude: pattern === "zigzag" ? 8 + d * 12 : 4 + d * 6,
         streamFrequency: pattern === "zigzag" ? 4.4 + d * 1.2 : 2.8 + d,
+        arcBend: (lane > 0 ? 1 : -1) * rand(10 + d * 6, 24 + d * 10),
+        arcLife: rand(1.9, 2.7),
         delay: pulse * cadence + (i % 2) * cadence * 0.36,
         quietHint: true,
       });
@@ -1489,13 +1549,18 @@
         ? spawnRegions.filter((region) => region.edge === oppositeEdge(primaryBase.edge))[
             (primaryIndex + Math.floor(rand(0, 3))) % spawnRegions.filter((region) => region.edge === oppositeEdge(primaryBase.edge)).length
           ]
-        : Math.random() < (level < 3 ? 0.24 : 0.48)
+        : Math.random() < (level <= 1 ? 0.18 : level < 4 ? 0.52 : 0.58)
           ? spawnRegions[(primaryIndex + Math.floor(rand(3, spawnRegions.length - 1))) % spawnRegions.length]
           : null;
     state.spawnFlowIndex += 1;
     return {
       startAt: state.elapsed,
-      duration: type === "machine" || type === "crossArc" ? rand(2800, 4600) : rand(3800, 6800) - d * 420,
+      duration:
+        level <= 1
+          ? rand(4300, 6800)
+          : type === "machine" || type === "crossArc" || type === "sGroup"
+            ? rand(2400, 4000)
+            : rand(3000, 5600) - d * 380,
       primary: makeSpawnRegion(primaryBase),
       secondary: secondaryBase ? makeSpawnRegion(secondaryBase, 1.4) : null,
       type,
@@ -1611,6 +1676,7 @@
 
   function spawnFlowBubble(flow, options = {}) {
     const d = difficulty();
+    const level = displayDifficultyLevel();
     let region = options.region ?? pickFlowRegion(flow);
     const progress = spawnFlowProgress(flow);
     const sizeKind =
@@ -1642,6 +1708,16 @@
     const target = targetForArchetype(flow, region, start, colorIndex);
     const speed = speedForArchetype(flow.type, sizeKind, d);
     const velocity = aimedVelocity(start.x, start.y, target, speed, flow.type === "bigRise" || flow.type === "bigSide" ? 3 : 8);
+    const curvedMotion = level >= 2 && flow.type !== "machine";
+    const motionRoll = Math.random();
+    const motionIsStream = flow.type === "sGroup" || (curvedMotion && motionRoll < (flow.type === "bigRise" ? 0.38 : 0.74));
+    const motionPattern = flow.type === "sGroup" ? "sGroup" : motionRoll < 0.42 ? "softS" : "arcDrift";
+    const motionAmplitude = flow.type === "sGroup" ? rand(16, 28) : motionIsStream ? rand(5 + d * 4, 13 + d * 9) : 0;
+    const motionFrequency = flow.type === "sGroup" ? rand(2.1, 3.0) : rand(1.25, 2.25 + d * 0.45);
+    const motionArc =
+      curvedMotion && Math.random() < (flow.type === "bigRise" ? 0.44 : 0.68)
+        ? (Math.random() < 0.5 ? -1 : 1) * rand(18 + d * 8, 42 + d * 18)
+        : 0;
     const spawned = spawnBubble(sizeKind === "small", "normal", {
       edge: region.edge,
       x: start.x,
@@ -1652,10 +1728,12 @@
       radius,
       speed,
       sizeKind,
-      isStream: flow.type === "sGroup",
-      streamPattern: flow.type === "sGroup" ? "sGroup" : "float",
-      streamAmplitude: flow.type === "sGroup" ? rand(16, 28) : 0,
-      streamFrequency: flow.type === "sGroup" ? rand(2.1, 3.0) : 3.6,
+      isStream: motionIsStream,
+      streamPattern: motionPattern,
+      streamAmplitude: motionAmplitude,
+      streamFrequency: motionFrequency,
+      arcBend: options.arcBend ?? motionArc,
+      arcLife: options.arcLife ?? rand(2.15, 3.35),
       quietHint: Boolean(options.quietHint),
       delay: options.delay ?? 0,
     });
@@ -1666,7 +1744,7 @@
   function spawnFlowGun(flow, maxAllowed = maxActiveBubbles) {
     const d = difficulty();
     const region = flow.primary;
-    const sameColor = displayDifficultyLevel() < 5;
+    const sameColor = displayDifficultyLevel() <= 1;
     const colorIndex = sameColor ? pickBalancedColorIndex() : null;
     const count = Math.min(Math.round(rand(4, 7)), maxAllowed, Math.max(0, maxActiveBubbles - state.bubbles.length));
     const radius = radiusForArchetype("machine");
@@ -1704,6 +1782,8 @@
         streamAmplitude: 4 + d * 5,
         streamFrequency: 2.8 + d,
         streamPhase: i * 0.48,
+        arcBend: (i % 2 === 0 ? 1 : -1) * rand(14 + d * 5, 28 + d * 10),
+        arcLife: rand(1.8, 2.55),
         delay: i * rand(0.11, 0.15),
         quietHint: true,
       });
@@ -1735,7 +1815,9 @@
       const radius = radiusForDifficulty(d, "stream") * rand(1.08, 1.34);
       const base = pointFromSpawnRegion(region, radius, spawnFlowProgress(flow), 0.018);
       const curveSign = side === 0 ? 1 : -1;
-      const stringColor = Math.random() < (displayDifficultyLevel() < 5 ? 0.76 : 0.48) ? pickBalancedColorIndex() : null;
+      const stringColor = Math.random() < (displayDifficultyLevel() <= 1 ? 0.82 : displayDifficultyLevel() <= 4 ? 0.34 : 0.46)
+        ? pickBalancedColorIndex()
+        : null;
 
       for (let i = 0; i < sideCount; i += 1) {
         const colorIndex = stringColor ?? pickBalancedColorIndex();
@@ -1784,7 +1866,7 @@
     const count = Math.min(Math.round(rand(3, 4)), maxAllowed, Math.max(0, maxActiveBubbles - state.bubbles.length));
     if (count <= 0) return 0;
     const region = flow.primary;
-    const colorIndex = Math.random() < 0.58 ? pickBalancedColorIndex() : null;
+    const colorIndex = Math.random() < (displayDifficultyLevel() <= 2 ? 0.22 : 0.38) ? pickBalancedColorIndex() : null;
     let spawned = 0;
     for (let i = 0; i < count; i += 1) {
       if (spawnFlowBubble(flow, {
@@ -1839,7 +1921,7 @@
       return;
     }
 
-    if (level >= 4 && flow.type === "sGroup" && !flow.usedBurst && state.bubbles.length <= 8) {
+    if (level >= 2 && flow.type === "sGroup" && !flow.usedBurst && state.bubbles.length <= 8) {
       const count = spawnFlowSGroup(flow, remainingStage);
       scheduleFlowSpawn(flow, Math.max(1, count));
       return;
@@ -1886,6 +1968,7 @@
       registerCombo({ chargeSkill: false });
       recordStageCorrect(cleared[i]);
     }
+    chargeClearSkillByBubbles(cleared);
     state.poppedCount += cleared.length;
     state.score += cleared.length;
     addWater(Math.min(24, 8 + cleared.length * 1.55 + comboWaterBonus()));
@@ -2067,6 +2150,7 @@
             : palette[bubble.colorIndex];
     state.bubbles.splice(index, 1);
     state.poppedCount += 1;
+    chargeClearSkillByBubble(bubble);
     registerCombo({ chargeSkill: false });
     recordStageCorrect(bubble);
     state.score += bubble.isWhite ? 1 : 1;
@@ -2235,6 +2319,7 @@
 
     state.bubbles.splice(index, 1);
     state.poppedCount += 1;
+    chargeClearSkillByBubble(bubble);
     state.score += 1;
     addWater(3.6);
     decolorBubbles(bubble);
@@ -2266,6 +2351,7 @@
 
     state.bubbles.splice(index, 1);
     state.poppedCount += 1;
+    chargeClearSkillByBubble(bubble);
     registerCombo();
     recordStageCorrect(bubble);
 
@@ -3757,7 +3843,7 @@
       debugLevelSelect.value = String(displayDifficultyLevel());
     }
     debugStageInfo.textContent = plan
-      ? `hit ${state.stageCorrectPops}/${plan.targetBubbles} miss ${state.stageMissedTargets} wrong ${state.stageWrongPops} spawn ${state.stageSpawned}/${plan.totalBubbles}`
+      ? `hit ${state.stageCorrectPops}/${plan.targetBubbles} miss ${state.stageMissedTargets} wrong ${state.stageWrongPops} spawn ${state.stageSpawned}/${plan.totalBubbles} avg +${plan.baseCorrectWater.toFixed(2)} -${plan.baseMissPenalty.toFixed(2)}`
       : "-";
   }
 
