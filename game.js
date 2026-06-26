@@ -3,7 +3,7 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false });
-  const buildVersion = "v2026.06.25-hudright";
+  const buildVersion = "v2026.06.26-pacecurve";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -31,7 +31,7 @@
   const bubbleSpriteCell = 192;
   const bubbleSpriteCols = 5;
   const targetFrameMs = 1000 / 30;
-  const maxActiveBubbles = 12;
+  const maxActiveBubbles = 10;
   const maxParticles = 72;
   const maxRipples = 32;
   const maxBlasts = 4;
@@ -40,11 +40,11 @@
   const debugUpdateMs = 500;
   const waterBudgetRounds = [
     { count: 10, total: 300 },
-    { count: 20, total: 250 },
-    { count: 40, total: 200 },
-    { count: 60, total: 150 },
-    { count: 100, total: 150 },
-    { count: 150, total: 120 },
+    { count: 18, total: 250 },
+    { count: 26, total: 200 },
+    { count: 34, total: 150 },
+    { count: 42, total: 150 },
+    { count: 50, total: 120 },
   ];
   const stageDurationMs = 20000;
 
@@ -247,37 +247,45 @@
   }
 
   function targetCorrectRateForLevel(level) {
-    return clamp(0.5 + (level - 1) * 0.05, 0.5, 0.88);
+    return clamp(
+      0.52 +
+        (level - 1) * 0.023 +
+        smoothstep(2, 8, level) * 0.075 +
+        smoothstep(9, 18, level) * 0.05 +
+        smoothstep(18, 30, level) * 0.025,
+      0.52,
+      0.97,
+    );
   }
 
   function bubbleCountForLevel(level) {
     const budget = waterBudgetRounds[Math.min(level - 1, waterBudgetRounds.length - 1)];
     if (level <= waterBudgetRounds.length) return budget.count;
     const extra = level - waterBudgetRounds.length;
-    return Math.round(budget.count + extra * 18);
+    return Math.round(clamp(budget.count + extra * 3, budget.count, 78));
   }
 
   function levelWaterDrainRate(level) {
-    const p = clamp((level - 1) / 9, 0, 1);
-    return 0.18 + p * 0.42 + smoothstep(4, 9, level) * 0.18;
+    const p = clamp((level - 1) / 18, 0, 1);
+    return 0.16 + p * 0.58 + smoothstep(10, 30, level) * 0.42;
   }
 
   function stageWaterBudgetForLevel(level) {
     const targetBubbles = Math.max(1, Math.round(bubbleCountForLevel(level) * targetCorrectRateForLevel(level)));
-    const sustain = level <= 3 ? 1.5 : level <= 6 ? 1.35 : 1.22;
-    const perTargetFloor = level <= 2 ? 0.26 : level <= 5 ? 0.16 : 0.09;
+    const sustain = level <= 3 ? 1.18 : level <= 8 ? 1.06 : level <= 15 ? 0.98 : 0.9;
+    const perTargetFloor = level <= 3 ? 0.18 : level <= 8 ? 0.1 : 0.055;
     return levelWaterDrainRate(level) * (stageDurationMs / 1000) * sustain + targetBubbles * perTargetFloor;
   }
 
   function stageTypeWeights(level) {
     const cappedLevel = Math.min(level, 10);
     const weights = {
-      bigRise: cappedLevel <= 2 ? 0.28 : 0.16,
-      bigSide: cappedLevel <= 3 ? 0.24 : 0.16,
-      normal: cappedLevel <= 2 ? 0.34 : 0.3,
-      crossArc: cappedLevel >= 2 ? 0.12 + cappedLevel * 0.01 : 0,
-      machine: cappedLevel >= 3 ? 0.12 + cappedLevel * 0.01 : 0,
-      sGroup: cappedLevel >= 4 ? 0.1 + cappedLevel * 0.012 : 0,
+      bigRise: level <= 2 ? 0.28 : level <= 7 ? 0.16 : 0.1,
+      bigSide: level <= 3 ? 0.24 : level <= 7 ? 0.16 : 0.11,
+      normal: level <= 2 ? 0.34 : level <= 6 ? 0.24 : 0.16,
+      crossArc: level >= 2 ? 0.14 + cappedLevel * 0.014 : 0,
+      machine: level >= 3 ? 0.14 + cappedLevel * 0.016 : 0,
+      sGroup: level >= 4 ? 0.12 + cappedLevel * 0.016 : 0,
     };
     return weights;
   }
@@ -341,8 +349,8 @@
     if (deficit <= 0) return true;
 
     const deficitRatio = deficit / Math.max(1, plan.targetBubbles);
-    const levelPressure = clamp((displayDifficultyLevel() - 1) / 9, 0, 1);
-    const penalty = clamp(7 + deficitRatio * 24 + levelPressure * 8, 7, 34);
+    const levelPressure = clamp((displayDifficultyLevel() - 1) / 18, 0, 1);
+    const penalty = clamp(8 + deficitRatio * 28 + levelPressure * 12, 8, 42);
     state.water = Math.max(0, state.water - penalty);
     state.waterPressure = Math.min(waterPressureCap, state.waterPressure + penalty * (1.1 + levelPressure * 0.35));
     waterDrainUntil = state.elapsed + 560;
@@ -375,26 +383,27 @@
   }
 
   function backgroundTimingForLevel(level) {
-    const p = clamp((level - 1) / 9, 0, 1);
-    const earlyMotion = smoothstep(1, 5, level);
-    const lateMotion = smoothstep(6, 10, level);
+    const p = clamp((level - 1) / 14, 0, 1);
+    const earlyMotion = smoothstep(1, 4, level);
+    const midMotion = smoothstep(3, 8, level);
+    const lateMotion = smoothstep(7, 16, level);
     return {
-      hold: clamp(9000 - p * 5500 - earlyMotion * 2600 - lateMotion * 2400, 650, 9000),
-      duration: clamp(7600 - p * 2600 - earlyMotion * 600 - lateMotion * 2200, 2800, 7600),
+      hold: clamp(6200 - earlyMotion * 1700 - midMotion * 2200 - lateMotion * 1800 - p * 800, 360, 6200),
+      duration: clamp(7800 - earlyMotion * 500 - midMotion * 700 + lateMotion * 2200, 5400, 9800),
     };
   }
 
   function makeBackgroundLayout(level, step = 0) {
-    const p = clamp((level - 1) / 9, 0, 1);
-    const motion = 0.58 + smoothstep(1, 6, level) * 0.86;
-    const turn = smoothstep(1.5, 8.5, level);
+    const p = clamp((level - 1) / 18, 0, 1);
+    const motion = 0.68 + smoothstep(1, 5, level) * 1.04 + smoothstep(7, 18, level) * 0.26;
+    const turn = smoothstep(1.2, 7, level);
     const baseAngle = turn * Math.PI * 0.5;
-    const angleSway = (0.045 + smoothstep(2, 8, level) * 0.19) * Math.sin(step * 0.72);
-    const lateRoll = smoothstep(6, 10, level) * Math.sin(step * 0.37 + 0.8) * 0.2;
+    const angleSway = (0.075 + smoothstep(2, 7, level) * 0.25 + smoothstep(7, 18, level) * 0.08) * Math.sin(step * 0.72);
+    const lateRoll = smoothstep(5, 18, level) * Math.sin(step * 0.37 + 0.8) * 0.32;
     const mode = step % 8;
-    const splitAmp = level < 3 ? 0.06 : level < 5 ? 0.115 : level < 7 ? 0.155 : 0.19 + p * 0.045;
-    const curveAmp = level < 3 ? 0.045 : level < 5 ? 0.078 : level < 7 ? 0.112 : 0.14 + p * 0.02;
-    const width = level < 4 ? 0.032 : clamp(0.034 + Math.sin(step * 0.48) * (0.004 + p * 0.008), 0.026, 0.052);
+    const splitAmp = level < 2 ? 0.075 : level < 4 ? 0.13 : level < 6 ? 0.18 : level < 8 ? 0.24 : 0.28 + p * 0.05;
+    const curveAmp = level < 2 ? 0.06 : level < 4 ? 0.105 : level < 6 ? 0.15 : level < 8 ? 0.19 : 0.23 + p * 0.035;
+    const width = level < 4 ? 0.03 : clamp(0.032 + Math.sin(step * 0.48) * (0.005 + p * 0.013), 0.023, 0.056);
     const splitWave = [0.18, -0.34, 0.48, -0.28, 0.62, -0.46, 0.3, -0.2][mode];
     const curveWave = [0.34, -0.28, 0.46, -0.58, 0.72, -0.42, 0.5, -0.32][mode];
     return {
@@ -896,10 +905,12 @@
   }
 
   function difficulty() {
-    const levelPart = clamp((displayDifficultyLevel() - 1) / 9, 0, 1);
+    const level = displayDifficultyLevel();
+    const levelPart = clamp((level - 1) / 18, 0, 1);
+    const latePart = smoothstep(10, 30, level);
     const stagePart = smoothstep(0.08, 0.92, stageCompletion());
     const scorePart = smoothstep(12, 220, state.score);
-    return clamp(levelPart * 0.82 + stagePart * 0.12 + scorePart * 0.16, 0, 1);
+    return clamp(levelPart * 0.92 + latePart * 0.36 + stagePart * 0.1 + scorePart * 0.12, 0, 1.42);
   }
 
   function difficultyTier(value) {
@@ -918,12 +929,12 @@
 
   function baseWaterDrainRate() {
     const level = displayDifficultyLevel();
-    const p = clamp((level - 1) / 9, 0, 1);
-    return levelWaterDrainRate(level) + smoothstep(0.58, 1, stageCompletion()) * (0.05 + p * 0.12);
+    const p = clamp((level - 1) / 18, 0, 1);
+    return levelWaterDrainRate(level) + smoothstep(0.55, 1, stageCompletion()) * (0.06 + p * 0.16);
   }
 
   function waterPressureHorizon() {
-    return 7.8 - clamp((displayDifficultyLevel() - 1) / 9, 0, 1) * 1.65;
+    return 7.8 - clamp((displayDifficultyLevel() - 1) / 18, 0, 1) * 2.2;
   }
 
   function waterDrainRate() {
@@ -946,8 +957,8 @@
     const softCap = options.softCap !== false;
     const highWater = softCap ? smoothstep(70, 96, state.water) : 0;
     const lowHelp = softCap ? smoothstep(34, 10, state.water) * 0.08 : 0;
-    const highDifficulty = smoothstep(3, 5, displayDifficultyLevel());
-    const multiplier = clamp(1 + lowHelp - highWater * (0.34 + highDifficulty * 0.1), 0.5, 1.08);
+    const highDifficulty = smoothstep(4, 16, displayDifficultyLevel());
+    const multiplier = clamp(1 + lowHelp - highWater * (0.34 + highDifficulty * 0.16), 0.44, 1.08);
     const applied = amount * multiplier;
     state.water = Math.min(100, state.water + applied);
     return applied;
@@ -981,10 +992,11 @@
 
   function stageMistakePenalty(type, bubble) {
     const level = displayDifficultyLevel();
-    const p = clamp((level - 1) / 9, 0, 1);
+    const p = clamp((level - 1) / 18, 0, 1);
+    const late = smoothstep(10, 26, level);
     const sizeFactor = bubble ? clamp(bubble.baseRadius / 42, 0.62, 1.25) : 1;
-    if (type === "wrong") return (4.2 + p * 4.8) * sizeFactor;
-    return (1.25 + p * 2.65) * sizeFactor;
+    if (type === "wrong") return (4.4 + p * 5.8 + late * 2.6) * sizeFactor;
+    return (1.35 + p * 3.15 + late * 1.65) * sizeFactor;
   }
 
   function penalizeStageMistake(bubble, type) {
@@ -1429,7 +1441,7 @@
     state.spawnFlowIndex += 1;
     return {
       startAt: state.elapsed,
-      duration: type === "machine" || type === "crossArc" ? rand(3200, 5200) : rand(4400, 7600) - d * 500,
+      duration: type === "machine" || type === "crossArc" ? rand(2800, 4600) : rand(3800, 6800) - d * 420,
       primary: makeSpawnRegion(primaryBase),
       secondary: secondaryBase ? makeSpawnRegion(secondaryBase, 1.4) : null,
       type,
@@ -1479,18 +1491,18 @@
     const budgetInterval = remainingMs / remaining;
     const base =
       flow.type === "bigRise"
-        ? 1280
+        ? 1120
         : flow.type === "bigSide"
-          ? 1120
+          ? 980
           : flow.type === "crossArc"
-            ? 560
+            ? 620
           : flow.type === "machine" && !flow.usedBurst
-            ? 360
+            ? 420
             : flow.type === "sGroup"
-              ? 720
-              : 860;
-    const flowInterval = (base * rand(0.82, 1.22)) / spawnFlowRhythm(flow) - d * 110;
-    const interval = clamp(Math.min(flowInterval, budgetInterval * rand(0.74, 1.16)), 220, 1500);
+              ? 680
+              : 760;
+    const flowInterval = (base * rand(0.82, 1.18)) / spawnFlowRhythm(flow) - d * 130;
+    const interval = clamp(Math.min(flowInterval, budgetInterval * rand(0.72, 1.08)), 180, 1320);
     state.nextSpawnAt = state.elapsed + interval + Math.max(0, count - 1) * 52;
   }
 
@@ -1534,13 +1546,13 @@
   }
 
   function speedForArchetype(type, sizeKind, d) {
-    if (type === "bigRise") return rand(28 + d * 6, 42 + d * 10);
-    if (type === "bigSide") return rand(34 + d * 8, 52 + d * 12);
-    if (type === "machine") return rand(92 + d * 18, 124 + d * 28);
-    if (type === "crossArc") return rand(68 + d * 14, 92 + d * 24);
-    if (type === "sGroup") return rand(48 + d * 16, 72 + d * 26);
-    if (sizeKind === "small") return rand(52 + d * 18, 76 + d * 28);
-    return rand(40 + d * 14, 64 + d * 24);
+    if (type === "bigRise") return rand(30 + d * 16, 46 + d * 24);
+    if (type === "bigSide") return rand(42 + d * 20, 62 + d * 32);
+    if (type === "machine") return rand(104 + d * 44, 142 + d * 62);
+    if (type === "crossArc") return rand(78 + d * 34, 104 + d * 48);
+    if (type === "sGroup") return rand(58 + d * 34, 82 + d * 48);
+    if (sizeKind === "small") return rand(66 + d * 34, 90 + d * 48);
+    return rand(48 + d * 26, 74 + d * 38);
   }
 
   function spawnFlowBubble(flow, options = {}) {
@@ -1602,7 +1614,7 @@
     const region = flow.primary;
     const sameColor = displayDifficultyLevel() < 5;
     const colorIndex = sameColor ? pickBalancedColorIndex() : null;
-    const count = Math.min(Math.round(rand(5, 9)), maxAllowed, Math.max(0, maxActiveBubbles - state.bubbles.length));
+    const count = Math.min(Math.round(rand(4, 7)), maxAllowed, Math.max(0, maxActiveBubbles - state.bubbles.length));
     const radius = radiusForArchetype("machine");
     const base = pointFromSpawnRegion(region, radius, spawnFlowProgress(flow), 0.012);
     makeSpawnHint(region.edge, base.x, base.y, radius, sameColor ? palette[colorIndex].light : clearTone.light, 0.34, count);
@@ -1650,7 +1662,7 @@
   function spawnFlowCrossArc(flow, maxAllowed = maxActiveBubbles) {
     const d = difficulty();
     const capacity = Math.max(0, maxActiveBubbles - state.bubbles.length);
-    const total = Math.min(Math.round(rand(6, 10)), maxAllowed, capacity);
+    const total = Math.min(Math.round(rand(5, 8)), maxAllowed, capacity);
     if (total <= 1) return 0;
 
     const regions = [flow.primary, flow.secondary ?? flow.primary];
@@ -1715,7 +1727,7 @@
   }
 
   function spawnFlowSGroup(flow, maxAllowed = maxActiveBubbles) {
-    const count = Math.min(Math.round(rand(3, 5)), maxAllowed, Math.max(0, maxActiveBubbles - state.bubbles.length));
+    const count = Math.min(Math.round(rand(3, 4)), maxAllowed, Math.max(0, maxActiveBubbles - state.bubbles.length));
     if (count <= 0) return 0;
     const region = flow.primary;
     const colorIndex = Math.random() < 0.58 ? pickBalancedColorIndex() : null;
@@ -1780,7 +1792,7 @@
     }
 
     let count = 1;
-    if (flow.type === "normal" && level >= 4 && spawnFlowRhythm(flow) > 1.25 && Math.random() < 0.36 + d * 0.16) count += 1;
+    if (flow.type === "normal" && level >= 5 && spawnFlowRhythm(flow) > 1.32 && state.bubbles.length <= 6 && Math.random() < 0.24 + d * 0.1) count += 1;
     if (level <= 2) count = 1;
     count = Math.min(count, remainingStage, Math.max(0, maxActiveBubbles - state.bubbles.length));
     if (count <= 0) return;
