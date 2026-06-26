@@ -3,7 +3,7 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false });
-  const buildVersion = "1.0.21";
+  const buildVersion = "1.0.23";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -47,6 +47,7 @@
     { count: 50, total: 120 },
   ];
   const stageDurationMs = 20000;
+  const stageEndGraceMs = 3000;
 
   const palette = [
     { name: "湖雾蓝", color: "#6eafc0", deep: "#3f7f91", light: "#cbe8ef" },
@@ -101,6 +102,8 @@
     bestCombo: 0,
     comboPulse: 0,
     comboUntil: 0,
+    comboRecoveryUntil: 0,
+    comboRecoveryPower: 0,
     clearSkillCharge: 1,
     clearSkillUses: 0,
     waterRoundIndex: 0,
@@ -109,6 +112,7 @@
     stagePlan: null,
     stageLevel: 1,
     stageStartAt: 0,
+    stageFinalSpawnAt: 0,
     stageSpawned: 0,
     stageTargetSpawned: 0,
     stageCorrectPops: 0,
@@ -270,12 +274,12 @@
   function levelWaterDrainRate(level) {
     const p = clamp((level - 1) / 14, 0, 1);
     return clamp(
-      0.46 +
-        p * 0.78 +
-        smoothstep(1, 5, level) * 0.28 +
-        smoothstep(5, 11, level) * 0.2,
-      0.46,
-      1.72,
+      0.52 +
+        p * 0.8 +
+        smoothstep(1, 5, level) * 0.3 +
+        smoothstep(5, 11, level) * 0.22,
+      0.52,
+      1.82,
     );
   }
 
@@ -353,6 +357,7 @@
     state.stageLevel = level;
     state.stagePlan = makeStagePlan(level);
     state.stageStartAt = state.elapsed;
+    state.stageFinalSpawnAt = 0;
     state.stageSpawned = 0;
     state.stageTargetSpawned = 0;
     state.stageCorrectPops = 0;
@@ -380,7 +385,9 @@
 
   function activeStageTargetCount() {
     return state.bubbles.reduce(
-      (count, bubble) => count + (bubble.age >= 0 && bubble.colorIndex >= 0 && !bubble.isWhite && (bubble.waterValue ?? 0) > 0 ? 1 : 0),
+      (count, bubble) =>
+        count +
+        (bubble.stageLevel === state.stageLevel && bubble.colorIndex >= 0 && !bubble.isWhite && (bubble.waterValue ?? 0) > 0 ? 1 : 0),
       0,
     );
   }
@@ -394,8 +401,11 @@
       resetStagePlan(1);
       return;
     }
-    const minimumStageTime = stageDurationMs * 0.78;
-    if (stageRemainingBubbles() > 0 || activeStageTargetCount() > 0 || stageElapsedMs() < minimumStageTime) return;
+    if (stageRemainingBubbles() > 0) return;
+    if (!state.stageFinalSpawnAt) state.stageFinalSpawnAt = state.elapsed;
+    const activeTargets = activeStageTargetCount();
+    const graceDone = state.elapsed - state.stageFinalSpawnAt >= stageEndGraceMs;
+    if (activeTargets > 0 && !graceDone) return;
     const nextLevel = state.stageLevel + 1;
     triggerDifficultyUp(nextLevel - 1);
     resetStagePlan(nextLevel);
@@ -759,7 +769,7 @@
   }
 
   function comboProgress() {
-    if (state.combo <= 0 || state.comboUntil <= state.elapsed) return 0;
+    if (state.combo <= 0) return 0;
     return clamp((state.comboUntil - state.elapsed) / comboWindow(), 0, 1);
   }
 
@@ -789,13 +799,10 @@
   }
 
   function registerCombo({ chargeSkill = true } = {}) {
-    if (state.combo > 0 && state.comboUntil <= state.elapsed) {
-      resetCombo();
-    }
     state.combo += 1;
     state.bestCombo = Math.max(state.bestCombo, state.combo);
     state.comboPulse = 1;
-    state.comboUntil = state.elapsed + comboWindow();
+    state.comboUntil = Number.POSITIVE_INFINITY;
     if (chargeSkill) {
       state.bombComboProgress += 1;
       if (state.combo >= 14 && state.bombComboProgress >= state.bombComboTarget) {
@@ -808,7 +815,18 @@
     }
   }
 
-  function resetCombo() {
+  function armComboRecovery(comboValue) {
+    const levelFactor = smoothstep(4, 12, displayDifficultyLevel());
+    if (!state.running || comboValue < 4 || levelFactor <= 0) return;
+    const comboFactor = clamp((comboValue - 3) / 26, 0.18, 1);
+    state.comboRecoveryUntil = Math.max(state.comboRecoveryUntil, state.elapsed + 4600 + levelFactor * 1200);
+    state.comboRecoveryPower = Math.max(state.comboRecoveryPower, (0.08 + comboFactor * 0.16) * levelFactor);
+  }
+
+  function resetCombo({ recovery = true } = {}) {
+    if (recovery) {
+      armComboRecovery(state.combo);
+    }
     state.combo = 0;
     state.comboPulse = 0;
     state.comboUntil = 0;
@@ -913,8 +931,10 @@
     waterGainUntil = 0;
     waterDrainUntil = 0;
     state.waterPressure = 0;
-    resetCombo();
+    resetCombo({ recovery: false });
     state.bestCombo = 0;
+    state.comboRecoveryUntil = 0;
+    state.comboRecoveryPower = 0;
     state.clearSkillCharge = 1;
     state.clearSkillUses = 0;
     state.waterRoundIndex = 0;
@@ -922,6 +942,7 @@
     state.waterOpportunityCount = 0;
     state.stageLevel = 1;
     state.stageStartAt = 0;
+    state.stageFinalSpawnAt = 0;
     state.stagePlan = null;
     state.stageSpawned = 0;
     state.stageTargetSpawned = 0;
@@ -1019,7 +1040,7 @@
     const level = displayDifficultyLevel();
     const p = clamp((level - 1) / 18, 0, 1);
     const stageTension = smoothstep(0.55, 1, stageCompletion()) * (0.06 + p * 0.16);
-    return clamp(levelWaterDrainRate(level) + stageTension, 0.46, 1.86);
+    return clamp(levelWaterDrainRate(level) + stageTension, 0.52, 1.98);
   }
 
   function waterPressureHorizon() {
@@ -1045,12 +1066,22 @@
   function addWater(amount, options = {}) {
     const softCap = options.softCap !== false;
     const highWater = softCap ? smoothstep(70, 96, state.water) : 0;
-    const lowHelp = softCap ? smoothstep(34, 10, state.water) * 0.08 : 0;
+    const recoveryActive = softCap && state.running && state.elapsed < state.comboRecoveryUntil;
+    const recoveryHelp = recoveryActive ? state.comboRecoveryPower * (0.72 + smoothstep(58, 18, state.water) * 0.54) : 0;
+    const lowHelp = softCap ? smoothstep(36, 12, state.water) * (0.08 + smoothstep(5, 14, displayDifficultyLevel()) * 0.06) : 0;
     const highDifficulty = smoothstep(4, 16, displayDifficultyLevel());
-    const multiplier = clamp(1 + lowHelp - highWater * (0.4 + highDifficulty * 0.2), 0.38, 1.06);
+    const multiplier = clamp(1 + lowHelp + recoveryHelp - highWater * (0.4 + highDifficulty * 0.2), 0.38, 1.06 + recoveryHelp * 0.72);
     const applied = amount * multiplier;
     state.water = Math.min(100, state.water + applied);
     return applied;
+  }
+
+  function relieveWaterPressureOnCorrect(appliedWaterGain, bubble) {
+    if (state.waterPressure <= 0 || !isStageTargetBubble(bubble)) return;
+    const levelHelp = smoothstep(5, 14, displayDifficultyLevel());
+    const recoveryHelp = state.elapsed < state.comboRecoveryUntil ? 1.45 : 1;
+    const relief = (0.08 + appliedWaterGain * 0.1 + levelHelp * 0.14) * recoveryHelp;
+    state.waterPressure = Math.max(0, state.waterPressure - relief);
   }
 
   function waterOpportunityValue(bubble) {
@@ -1073,6 +1104,7 @@
     if (!state.stagePlan || !bubble) return;
     if (bubble.colorIndex < 0 || bubble.isWhite || (bubble.waterValue ?? 0) <= 0) return;
     state.correctBubbleCount += 1;
+    if (bubble.stageLevel !== state.stageLevel) return;
     state.stageCorrectPops = Math.min(state.stageCorrectPops + 1, state.stagePlan.totalBubbles);
   }
 
@@ -1096,8 +1128,10 @@
   function penalizeStageMistake(bubble, type) {
     if (!isStageTargetBubble(bubble)) return;
     const penalty = stageMistakePenalty(type, bubble);
-    if (type === "wrong") state.stageWrongPops += 1;
-    if (type === "miss") state.stageMissedTargets += 1;
+    if (bubble.stageLevel === state.stageLevel) {
+      if (type === "wrong") state.stageWrongPops += 1;
+      if (type === "miss") state.stageMissedTargets += 1;
+    }
     state.waterPressure = Math.min(waterPressureCap, state.waterPressure + penalty * 0.85);
     state.water = Math.max(0, state.water - penalty);
     if (state.water <= 0) {
@@ -1239,6 +1273,7 @@
       wrongPenalty: waterProfile.wrongPenalty ?? 0,
       difficultyWeight: waterProfile.difficultyWeight ?? 1,
       colorIndex,
+      stageLevel: kind === "normal" ? state.stageLevel : 0,
       isSuper,
       isClear,
       isBleach,
@@ -1272,6 +1307,9 @@
     state.bubbles.push(bubble);
     if (kind === "normal" && !options.ignoreStageBudget) {
       state.stageSpawned += 1;
+      if (state.stagePlan && state.stageSpawned >= state.stagePlan.totalBubbles) {
+        state.stageFinalSpawnAt = state.elapsed + Math.max(0, options.delay ?? 0) * 1000;
+      }
     }
     noteWaterOpportunity(bubble);
 
@@ -2401,6 +2439,7 @@
 
     state.score += scoreGain;
     const appliedWaterGain = addWater(waterGain);
+    relieveWaterPressureOnCorrect(appliedWaterGain, bubble);
     state.flash = Math.max(state.flash, bubble.isSuper ? 0.46 : isSmall ? 0.16 : 0.28);
     makeFloatText(
       bubble.x,
@@ -2718,12 +2757,9 @@
     state.flash = Math.max(0, state.flash - dt * 1.9);
     state.difficultyFlash = Math.max(0, state.difficultyFlash - dt * 0.9);
     state.comboPulse = Math.max(0, state.comboPulse - dt * 2.6);
-    if (state.combo > 0 && state.comboUntil <= state.elapsed) {
-      resetCombo();
-      updateHud();
-    } else if (state.combo > 1) {
+    if (state.combo > 1) {
       comboChip.style.setProperty("--combo-left", comboProgress().toFixed(3));
-      comboChip.classList.toggle("expiring", comboProgress() < 0.32);
+      comboChip.classList.remove("expiring");
     }
 
     while (state.elapsed >= state.nextSpawnAt) {
@@ -3853,7 +3889,9 @@
       resetGame();
     }
     clearRuntimeEffects();
-    resetCombo();
+    resetCombo({ recovery: false });
+    state.comboRecoveryUntil = 0;
+    state.comboRecoveryPower = 0;
     state.elapsed = Math.max(0, (targetLevel - 1) * stageDurationMs);
     state.water = 76;
     state.waterPressure = 0;
