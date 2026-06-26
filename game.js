@@ -3,7 +3,7 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false });
-  const buildVersion = "1.0.23";
+  const buildVersion = "1.0.24";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -746,6 +746,19 @@
     if (state.combo >= 4) return "C";
     if (state.combo >= 2) return "D";
     return "";
+  }
+
+  function comboRankStyle(rank = comboRank()) {
+    const styles = {
+      D: { color: "#b9e8f5", scale: 1.02, shadow: "#73c8dd" },
+      C: { color: "#9ff0d2", scale: 1.1, shadow: "#5cc9a8" },
+      B: { color: "#ffe08a", scale: 1.2, shadow: "#e0a83d" },
+      A: { color: "#ffb5cf", scale: 1.34, shadow: "#e06f98" },
+      S: { color: "#ff9f74", scale: 1.52, shadow: "#f15f4e" },
+      SS: { color: "#d99dff", scale: 1.72, shadow: "#9965e7" },
+      SSS: { color: "#fff2a3", scale: 1.95, shadow: "#ff78c8" },
+    };
+    return styles[rank] ?? { color: "#ffffff", scale: 1, shadow: "#ffffff" };
   }
 
   function formatTime(ms) {
@@ -2226,7 +2239,7 @@
     });
   }
 
-  function makeFloatText(x, y, text, color, scale = 1) {
+  function makeFloatText(x, y, text, color, scale = 1, options = {}) {
     if (state.floaters.length >= maxFloaters) {
       state.floaters.splice(0, state.floaters.length - maxFloaters + 1);
     }
@@ -2236,9 +2249,25 @@
       text,
       color,
       scale,
+      fontFamily: options.fontFamily ?? null,
+      italic: Boolean(options.italic),
+      stroke: options.stroke ?? null,
+      shadow: options.shadow ?? null,
       age: 0,
-      life: 0.78,
-      vy: -34,
+      life: options.life ?? 0.78,
+      vy: options.vy ?? -34,
+    });
+  }
+
+  function makeComboFloatText(x, y, text, rank, scaleBoost = 1) {
+    const style = comboRankStyle(rank);
+    makeFloatText(x, y, text, style.color, style.scale * scaleBoost, {
+      fontFamily: '"Brush Script MT", "Segoe Script", "Comic Sans MS", "Arial Rounded MT Bold", cursive',
+      italic: true,
+      stroke: "rgba(15, 25, 37, 0.64)",
+      shadow: style.shadow,
+      life: 0.92,
+      vy: -38,
     });
   }
 
@@ -2271,13 +2300,18 @@
     if (milestone) {
       const rank = comboRank() || "B";
       const text = `${rank} x${state.combo}!`;
-      makeFloatText(x, y - 30, text, color.light, Math.min(1.86, 1.24 + state.combo * 0.02));
+      makeComboFloatText(x, y - 30, text, rank, mega ? 1.12 : 1);
       state.flash = Math.max(state.flash, mega ? 0.2 : 0.14);
     } else if (state.combo === 3) {
-      makeFloatText(x, y - 22, `${comboRank()} x${state.combo}`, color.light, 1.12);
+      const rank = comboRank();
+      makeComboFloatText(x, y - 22, `${rank} x${state.combo}`, rank, 0.86);
     } else if (state.combo >= 7 && state.combo % 3 === 1) {
       const rank = comboRank();
-      makeFloatText(x, y - 22, rank ? `${rank} x${state.combo}` : `x${state.combo}`, color.light, Math.min(1.42, 1.08 + state.combo * 0.014));
+      if (rank) {
+        makeComboFloatText(x, y - 22, `${rank} x${state.combo}`, rank, 0.92);
+      } else {
+        makeFloatText(x, y - 22, `x${state.combo}`, color.light, Math.min(1.42, 1.08 + state.combo * 0.014));
+      }
     }
   }
 
@@ -3550,13 +3584,14 @@
       const size = 18 * floater.scale * pop;
       ctx.save();
       ctx.globalAlpha = alpha;
-      ctx.font = `1000 ${size}px "Arial Rounded MT Bold", "PingFang SC", "Microsoft YaHei UI", ui-rounded, sans-serif`;
+      const fontFamily = floater.fontFamily ?? '"Arial Rounded MT Bold", "PingFang SC", "Microsoft YaHei UI", ui-rounded, sans-serif';
+      ctx.font = `${floater.italic ? "italic " : ""}1000 ${size}px ${fontFamily}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.lineWidth = Math.max(3.2, size * 0.2);
-      ctx.strokeStyle = "rgba(20, 48, 66, 0.26)";
-      ctx.shadowColor = colorWithAlpha("#ffffff", 0.16 * alpha);
-      ctx.shadowBlur = 10;
+      ctx.lineWidth = Math.max(3.2, size * (floater.fontFamily ? 0.16 : 0.2));
+      ctx.strokeStyle = floater.stroke ?? "rgba(20, 48, 66, 0.26)";
+      ctx.shadowColor = colorWithAlpha(floater.shadow ?? "#ffffff", (floater.shadow ? 0.46 : 0.16) * alpha);
+      ctx.shadowBlur = floater.shadow ? 14 : 10;
       ctx.fillStyle = floater.color;
       ctx.strokeText(floater.text, floater.x, floater.y);
       ctx.fillText(floater.text, floater.x, floater.y);
