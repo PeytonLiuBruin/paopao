@@ -3,7 +3,7 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false });
-  const buildVersion = "1.0.24";
+  const buildVersion = "1.0.26";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -28,6 +28,8 @@
   bombBubbleImage.src = "./assets/bomb-bubble.png";
   const bleachBubbleImage = new Image();
   bleachBubbleImage.src = "./assets/bleach-bubble.png";
+  const catBubbleImage = new Image();
+  catBubbleImage.src = "./assets/cat-bubble.png";
   const bubbleSpriteCell = 192;
   const bubbleSpriteCols = 5;
   const targetFrameMs = 1000 / 40;
@@ -70,6 +72,11 @@
   const decolorWarningMs = 1500;
   const bleachRequiredHits = 3;
   const bleachLifetimeMs = 5000;
+  const catBubbleMinLevel = 5;
+  const catBubbleMaxPerGame = 2;
+  const catBubbleTapRequired = 4;
+  const catBubbleHoldMs = 760;
+  const catBubbleWaterGain = 5;
   const fairMatchDwell = 2;
   const clearSkillMaxUses = 3;
   const edgeCycle = ["left", "right", "bottom", "top"];
@@ -129,6 +136,15 @@
     nextPowerAt: 22000,
     nextStreamAt: 18000,
     nextSpawnAt: 0,
+    catBubbleCounter: 0,
+    catBubbleSpawned: 0,
+    catMistakeCounting: false,
+    catMistakeCount: 0,
+    catMistakeTarget: 0,
+    catHoldPointerId: null,
+    catHoldBubbleId: null,
+    catHoldX: 0,
+    catHoldY: 0,
     openUntil: 0,
     flash: 0,
     bubbles: [],
@@ -972,6 +988,15 @@
     state.nextPowerAt = 22000;
     state.nextStreamAt = 40000;
     state.nextSpawnAt = 120;
+    state.catBubbleCounter = 0;
+    state.catBubbleSpawned = 0;
+    state.catMistakeCounting = false;
+    state.catMistakeCount = 0;
+    state.catMistakeTarget = Math.floor(rand(10, 21));
+    state.catHoldPointerId = null;
+    state.catHoldBubbleId = null;
+    state.catHoldX = 0;
+    state.catHoldY = 0;
     state.spawnFlow = null;
     state.spawnFlowIndex = 0;
     resetStagePlan(1);
@@ -1106,7 +1131,7 @@
   }
 
   function isSpecialBubble(bubble) {
-    return Boolean(bubble && (bubble.isSuper || bubble.isClear || bubble.isBleach || bubble.isBomb));
+    return Boolean(bubble && (bubble.isSuper || bubble.isClear || bubble.isBleach || bubble.isBomb || bubble.isCat));
   }
 
   function noteWaterOpportunity(bubble) {
@@ -1144,6 +1169,14 @@
     if (bubble.stageLevel === state.stageLevel) {
       if (type === "wrong") state.stageWrongPops += 1;
       if (type === "miss") state.stageMissedTargets += 1;
+    }
+    if (type === "wrong" && displayDifficultyLevel() >= catBubbleMinLevel) {
+      if (!state.catMistakeCounting) {
+        state.catMistakeCounting = true;
+        state.catMistakeCount = 0;
+        state.catMistakeTarget = Math.floor(rand(10, 21));
+      }
+      state.catMistakeCount += 1;
     }
     state.waterPressure = Math.min(waterPressureCap, state.waterPressure + penalty * 0.85);
     state.water = Math.max(0, state.water - penalty);
@@ -1216,6 +1249,7 @@
     const isClear = kind === "clear";
     const isBleach = kind === "bleach";
     const isBomb = kind === "bomb";
+    const isCat = kind === "cat";
     const forcedSize = options.sizeKind ?? null;
     const smallWave =
       options.isStream ||
@@ -1291,6 +1325,12 @@
       isClear,
       isBleach,
       isBomb,
+      isCat,
+      catId: isCat ? ++state.catBubbleCounter : 0,
+      catHits: 0,
+      catHoldMs: 0,
+      catTapRequired: options.catTapRequired ?? catBubbleTapRequired,
+      catHoldRequiredMs: options.catHoldRequiredMs ?? catBubbleHoldMs,
       bleachHits: 0,
       bleachRequiredHits,
       bleachExpireAt: isBleach ? state.elapsed + bleachLifetimeMs : 0,
@@ -1330,11 +1370,13 @@
       ? bombTone.light
       : isBleach
         ? whiteTone.light
-        : isClear
-          ? clearTone.color
-          : isSuper
-            ? openTone.color
-            : palette[colorIndex].color;
+        : isCat
+          ? "#fff6d6"
+          : isClear
+            ? clearTone.color
+            : isSuper
+              ? openTone.color
+              : palette[colorIndex].color;
     if (!options.quietHint) {
       makeSpawnHint(edge, x, y, radius, hintColor, 0.46);
     }
@@ -1347,6 +1389,76 @@
     if (edge === "right") return { x: state.width + radius, y: clamp(offset, margin, state.height - margin) };
     if (edge === "top") return { x: clamp(offset, margin, state.width - margin), y: -radius };
     return { x: clamp(offset, margin, state.width - margin), y: state.height + radius };
+  }
+
+  function hasActiveCatBubble() {
+    return state.bubbles.some((bubble) => bubble.isCat);
+  }
+
+  function catBubbleById(catId) {
+    return state.bubbles.find((bubble) => bubble.isCat && bubble.catId === catId) ?? null;
+  }
+
+  function spawnCatBubble(reason = "level") {
+    if (!state.running || displayDifficultyLevel() < catBubbleMinLevel) return false;
+    if (state.catBubbleSpawned >= catBubbleMaxPerGame || hasActiveCatBubble()) return false;
+    if (state.bubbles.length >= maxActiveBubbles) return false;
+
+    const d = difficulty();
+    const edge = pickSpawnEdge();
+    const radius = clamp(radiusForDifficulty(d, "large") * rand(1.08, 1.22), 46, 72);
+    const offset =
+      edge === "left" || edge === "right"
+        ? rand(state.height * 0.28, state.height * 0.72)
+        : rand(state.width * 0.24, state.width * 0.76);
+    const start = pointFromEdge(edge, radius, offset);
+    const target = {
+      x: rand(state.width * 0.28, state.width * 0.72),
+      y: rand(state.height * 0.28, state.height * 0.72),
+    };
+    const speed = rand(32 + d * 8, 48 + d * 12);
+    const velocity = aimedVelocity(start.x, start.y, target, speed, 8);
+    const spawned = spawnBubble(false, "cat", {
+      edge,
+      x: start.x,
+      y: start.y,
+      target,
+      velocity,
+      radius,
+      speed,
+      quietHint: false,
+    });
+
+    if (spawned) {
+      state.catBubbleSpawned += 1;
+      state.ripples.push({
+        x: clamp(start.x, 0, state.width),
+        y: clamp(start.y, 0, state.height),
+        radius: radius * 0.7,
+        age: 0,
+        life: 0.48,
+        color: "#fff6d6",
+        power: reason === "mistake" ? 0.98 : 0.72,
+      });
+    }
+    return spawned;
+  }
+
+  function maybeActivateCatBubbleSystem() {
+    if (displayDifficultyLevel() < catBubbleMinLevel) return;
+    if (!state.catMistakeCounting) {
+      state.catMistakeCounting = true;
+      state.catMistakeCount = 0;
+      state.catMistakeTarget = Math.floor(rand(10, 21));
+    }
+    if (state.catBubbleSpawned === 0) {
+      spawnCatBubble("level");
+    } else if (
+      state.catBubbleSpawned < catBubbleMaxPerGame &&
+      state.catMistakeCount >= state.catMistakeTarget
+    ) {
+      spawnCatBubble("mistake");
+    }
   }
 
   function spawnComboBomb() {
@@ -2008,7 +2120,9 @@
     const cleared = [];
     const waiting = [];
     state.bubbles.forEach((bubble) => {
-      if (bubble.age >= 0) {
+      if (bubble.isCat) {
+        waiting.push(bubble);
+      } else if (bubble.age >= 0) {
         cleared.push(bubble);
       } else {
         waiting.push(bubble);
@@ -2355,6 +2469,87 @@
     }
   }
 
+  function finishCatBubble(bubble, reason = "tap") {
+    const index = state.bubbles.indexOf(bubble);
+    if (index < 0) return;
+    state.bubbles.splice(index, 1);
+    if (state.catHoldBubbleId === bubble.catId) {
+      state.catHoldPointerId = null;
+      state.catHoldBubbleId = null;
+    }
+    state.poppedCount += 1;
+    state.score += 1;
+    const appliedWaterGain = addWater(catBubbleWaterGain, { softCap: false });
+    state.flash = Math.max(state.flash, 0.24);
+    state.ripples.push({
+      x: bubble.x,
+      y: bubble.y,
+      radius: bubble.radius * 0.78,
+      age: 0,
+      life: 0.46,
+      color: "#fff6d6",
+      power: 0.92,
+    });
+    makeFloatText(bubble.x, bubble.y - bubble.radius * 0.9, `+${formatWaterGain(appliedWaterGain)}`, "#fff6d6", 1.08);
+    for (let i = 0; i < 14; i += 1) {
+      makeParticle(bubble.x, bubble.y, i % 2 === 0 ? "#fff6d6" : "#f4c1d6", rand(58, 172), rand(0, Math.PI * 2), rand(0.26, 0.56), i % 5 === 0);
+    }
+    vibratePop(reason === "hold" ? 22 : 14);
+    playCatMeow(reason === "hold" ? "hold" : "clear");
+    updateHud();
+  }
+
+  function hitCatBubble(bubble, pointerId, hitX, hitY) {
+    bubble.catHits = Math.min((bubble.catHits ?? 0) + 1, bubble.catTapRequired ?? catBubbleTapRequired);
+    bubble.catHoldMs = Math.max(0, bubble.catHoldMs ?? 0);
+    state.catHoldPointerId = pointerId ?? state.activePointerId;
+    state.catHoldBubbleId = bubble.catId;
+    state.catHoldX = hitX;
+    state.catHoldY = hitY;
+
+    const remaining = Math.max(0, (bubble.catTapRequired ?? catBubbleTapRequired) - bubble.catHits);
+    state.ripples.push({
+      x: bubble.x,
+      y: bubble.y,
+      radius: bubble.radius * (0.44 + bubble.catHits * 0.06),
+      age: 0,
+      life: 0.22,
+      color: "#fff6d6",
+      power: 0.58,
+    });
+    if (remaining > 0) {
+      makeFloatText(bubble.x, bubble.y - bubble.radius, `${bubble.catHits}/${bubble.catTapRequired ?? catBubbleTapRequired}`, "#fff6d6", 0.92);
+      vibratePop(7);
+      playCatMeow("tap");
+      return;
+    }
+
+    finishCatBubble(bubble, "tap");
+  }
+
+  function updateCatBubbleHold(dt) {
+    if (state.catHoldPointerId === null || state.catHoldBubbleId === null) return;
+    const bubble = catBubbleById(state.catHoldBubbleId);
+    if (!bubble || bubble.age < 0) {
+      state.catHoldPointerId = null;
+      state.catHoldBubbleId = null;
+      return;
+    }
+
+    const dx = state.catHoldX - bubble.x;
+    const dy = state.catHoldY - bubble.y;
+    const inside = dx * dx + dy * dy <= (bubble.radius * 1.08) * (bubble.radius * 1.08);
+    if (!inside) {
+      bubble.catHoldMs = Math.max(0, (bubble.catHoldMs ?? 0) - dt * 600);
+      return;
+    }
+
+    bubble.catHoldMs = Math.min((bubble.catHoldRequiredMs ?? catBubbleHoldMs), (bubble.catHoldMs ?? 0) + dt * 1000);
+    if (bubble.catHoldMs >= (bubble.catHoldRequiredMs ?? catBubbleHoldMs)) {
+      finishCatBubble(bubble, "hold");
+    }
+  }
+
   function hitBleachBubble(bubble, index, hitX, hitY) {
     if (state.elapsed < (bubble.bleachHitCooldownUntil ?? 0)) return;
     bubble.bleachHitCooldownUntil = state.elapsed + 140;
@@ -2552,6 +2747,7 @@
       bubble.isClear ||
       bubble.isBleach ||
       bubble.isBomb ||
+      bubble.isCat ||
       bubble.isWhite ||
       bubble.colorIndex === -1
     ) {
@@ -2642,7 +2838,7 @@
 
   function keepBubbleMoving(bubble, d) {
     const speed = Math.hypot(bubble.vx, bubble.vy);
-    const minSpeed = bubble.isStream ? 64 + d * 28 : 30 + d * 42;
+    const minSpeed = bubble.isCat ? 18 + d * 8 : bubble.isStream ? 64 + d * 28 : 30 + d * 42;
     if (speed >= minSpeed) return;
 
     const direction =
@@ -2710,7 +2906,7 @@
     bubble.vy += pushY * force;
   }
 
-  function tryPopAt(x, y, isTap) {
+  function tryPopAt(x, y, isTap, pointerId = null) {
     for (let i = state.bubbles.length - 1; i >= 0; i -= 1) {
       const bubble = state.bubbles[i];
       if (bubble.age < 0) {
@@ -2722,6 +2918,12 @@
       const hitPadding = isTap ? 8 - latePrecision * 4.5 : 14 - latePrecision * 6.5;
       const hitRadius = bubble.radius + hitPadding;
       if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+        if (bubble.isCat) {
+          if (isTap) {
+            hitCatBubble(bubble, pointerId, x, y);
+          }
+          return true;
+        }
         if (canPopBubble(bubble, x, y)) {
           popBubble(bubble, i, x, y);
         } else {
@@ -2745,7 +2947,7 @@
     state.lastSwipeX = x;
     state.lastSwipeY = y;
     canvas.setPointerCapture?.(event.pointerId);
-    tryPopAt(x, y, true);
+    tryPopAt(x, y, true, event.pointerId);
   }
 
   function handlePointerMove(event) {
@@ -2755,6 +2957,10 @@
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
+    if (state.catHoldPointerId === event.pointerId) {
+      state.catHoldX = x;
+      state.catHoldY = y;
+    }
     const dx = x - state.lastSwipeX;
     const dy = y - state.lastSwipeY;
     const distance = Math.hypot(dx, dy);
@@ -2774,6 +2980,10 @@
       state.activePointerId = null;
       canvas.releasePointerCapture?.(event.pointerId);
     }
+    if (state.catHoldPointerId === event.pointerId) {
+      state.catHoldPointerId = null;
+      state.catHoldBubbleId = null;
+    }
   }
 
   function update(dt) {
@@ -2782,6 +2992,7 @@
     state.elapsed += dt * 1000;
     updateBackgroundFlow(dt);
     maybeAdvanceStage();
+    maybeActivateCatBubbleSystem();
     const d = difficulty();
     const tier = difficultyTier(d);
     if (tier > state.difficultyTier) {
@@ -2800,6 +3011,8 @@
       spawnWave();
     }
     maybeAdvanceStage();
+    maybeActivateCatBubbleSystem();
+    updateCatBubbleHold(dt);
 
     for (let i = state.bubbles.length - 1; i >= 0; i -= 1) {
       const bubble = state.bubbles[i];
@@ -3311,6 +3524,53 @@
     return true;
   }
 
+  function drawCatBubbleTexture(bubble, x, y, r, alpha = 1) {
+    const holdProgress = clamp((bubble.catHoldMs ?? 0) / (bubble.catHoldRequiredMs ?? catBubbleHoldMs), 0, 1);
+    const tapProgress = clamp((bubble.catHits ?? 0) / (bubble.catTapRequired ?? catBubbleTapRequired), 0, 1);
+    const progress = Math.max(holdProgress, tapProgress);
+    const pulse = Math.sin(bubble.age * 2.1 + bubble.skinPhase) * 0.018;
+    const drawSize = r * 2.48;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.sin(bubble.wobble * 0.62 + bubble.skinPhase) * 0.04 + bubble.spin * 0.012);
+    ctx.scale(1 + pulse, 1 - pulse * 0.55);
+    ctx.globalAlpha *= alpha;
+    ctx.shadowColor = "rgba(255, 246, 214, 0.34)";
+    ctx.shadowBlur = r * 0.55;
+    if (catBubbleImage.complete && catBubbleImage.naturalWidth > 0) {
+      ctx.drawImage(catBubbleImage, -drawSize * 0.5, -drawSize * 0.5, drawSize, drawSize);
+    } else {
+      const fallback = ctx.createRadialGradient(-r * 0.34, -r * 0.42, r * 0.08, 0, 0, r);
+      fallback.addColorStop(0, "rgba(255, 255, 255, 0.96)");
+      fallback.addColorStop(0.48, "rgba(255, 232, 196, 0.55)");
+      fallback.addColorStop(1, "rgba(116, 77, 48, 0.42)");
+      ctx.fillStyle = fallback;
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+    ctx.restore();
+
+    if (progress > 0) {
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.arc(x, y, r + 10, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+      ctx.strokeStyle = "rgba(255, 246, 214, 0.82)";
+      ctx.lineWidth = Math.max(3, r * 0.085);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x, y, r + 10, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+      ctx.lineWidth = Math.max(1.4, r * 0.035);
+      ctx.stroke();
+      ctx.restore();
+    }
+    return true;
+  }
+
   function drawBubble(bubble) {
     if (bubble.age < 0) {
       return;
@@ -3389,7 +3649,7 @@
       ctx.stroke();
     }
 
-    if (openActive && !bubble.isSuper && !bubble.isClear && !bubble.isBleach && !bubble.isBomb && !bubble.isWhite) {
+    if (openActive && !bubble.isSuper && !bubble.isClear && !bubble.isBleach && !bubble.isBomb && !bubble.isCat && !bubble.isWhite) {
       ctx.save();
       ctx.setLineDash([Math.max(5, r * 0.18), Math.max(4, r * 0.14)]);
       ctx.lineDashOffset = -state.visualTime * 0.018;
@@ -3401,9 +3661,10 @@
       ctx.restore();
     }
 
-    const bombTextured = bubble.isBomb && drawBombTexture(bubble, x, y, r, whiteAlpha);
-    const bleachTextured = !bombTextured && bubble.isBleach && drawBleachTexture(bubble, x, y, r, whiteAlpha);
-    if (!bombTextured && !bleachTextured) {
+    const catTextured = bubble.isCat && drawCatBubbleTexture(bubble, x, y, r, whiteAlpha);
+    const bombTextured = !catTextured && bubble.isBomb && drawBombTexture(bubble, x, y, r, whiteAlpha);
+    const bleachTextured = !catTextured && !bombTextured && bubble.isBleach && drawBleachTexture(bubble, x, y, r, whiteAlpha);
+    if (!catTextured && !bombTextured && !bleachTextured) {
       if (!drawBubbleSpriteBody(bubble, color, x, y, r, whiteAlpha)) {
         drawProceduralBubbleBody(body, color, x, y, r);
       }
@@ -3812,6 +4073,56 @@
           playTone("sine", milestoneBase * 1.92, milestoneBase * 2.02, 0.007, 0.11, 0.13, 0.018, 2800);
         }
       }
+    } catch {
+      audioContext = null;
+    }
+  }
+
+  function playCatMeow(kind = "tap", delayOffset = 0) {
+    try {
+      audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
+      audioContext.resume?.();
+      const now = audioContext.currentTime + delayOffset;
+      const strong = kind === "clear" || kind === "hold";
+      const start = strong ? 520 : 590;
+      const middle = strong ? 760 : 690;
+      const end = strong ? 430 : 500;
+      const length = strong ? 0.34 : 0.18;
+      const peak = strong ? 0.034 : 0.018;
+
+      const osc = audioContext.createOscillator();
+      const formant = audioContext.createBiquadFilter();
+      const gain = audioContext.createGain();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(start, now);
+      osc.frequency.exponentialRampToValueAtTime(middle, now + length * 0.32);
+      osc.frequency.exponentialRampToValueAtTime(end, now + length * 0.92);
+      formant.type = "bandpass";
+      formant.frequency.setValueAtTime(strong ? 1180 : 1280, now);
+      formant.frequency.exponentialRampToValueAtTime(strong ? 860 : 980, now + length);
+      formant.Q.setValueAtTime(6.5, now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(peak, now + 0.028);
+      gain.gain.exponentialRampToValueAtTime(peak * 0.62, now + length * 0.45);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + length);
+      osc.connect(formant);
+      formant.connect(gain);
+      gain.connect(audioContext.destination);
+      osc.start(now);
+      osc.stop(now + length + 0.04);
+
+      const purr = audioContext.createOscillator();
+      const purrGain = audioContext.createGain();
+      purr.type = "triangle";
+      purr.frequency.setValueAtTime(strong ? 92 : 118, now);
+      purr.frequency.exponentialRampToValueAtTime(strong ? 76 : 96, now + length);
+      purrGain.gain.setValueAtTime(0.0001, now);
+      purrGain.gain.exponentialRampToValueAtTime(peak * 0.22, now + 0.02);
+      purrGain.gain.exponentialRampToValueAtTime(0.0001, now + length * 0.86);
+      purr.connect(purrGain);
+      purrGain.connect(audioContext.destination);
+      purr.start(now);
+      purr.stop(now + length);
     } catch {
       audioContext = null;
     }
