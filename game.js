@@ -3,7 +3,7 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false });
-  const buildVersion = "1.0.25";
+  const buildVersion = "1.0.26";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
