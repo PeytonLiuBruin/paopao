@@ -3,7 +3,7 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false });
-  const buildVersion = "1.0.26";
+  const buildVersion = "1.0.29";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -77,6 +77,8 @@
   const catBubbleTapRequired = 4;
   const catBubbleHoldMs = 760;
   const catBubbleWaterGain = 5;
+  const customPackStorageKey = "paopao.customBubblePack.v1";
+  const customPackSchema = "paopao-bubble-pack@1";
   const fairMatchDwell = 2;
   const clearSkillMaxUses = 3;
   const edgeCycle = ["left", "right", "bottom", "top"];
@@ -136,6 +138,14 @@
     nextPowerAt: 22000,
     nextStreamAt: 18000,
     nextSpawnAt: 0,
+    bubbleCounter: 0,
+    customBubblePack: null,
+    customPackStatus: "",
+    customPackLastSpawnAt: 0,
+    customHoldPointerId: null,
+    customHoldBubbleUid: null,
+    customHoldX: 0,
+    customHoldY: 0,
     catBubbleCounter: 0,
     catBubbleSpawned: 0,
     catMistakeCounting: false,
@@ -200,6 +210,153 @@
     return Math.floor(Math.random() * palette.length);
   }
 
+  function choose(list) {
+    return list[Math.floor(rand(0, list.length))];
+  }
+
+  function normalizeRange(value, fallback, min = Number.NEGATIVE_INFINITY, max = Number.POSITIVE_INFINITY) {
+    const source = Array.isArray(value) ? value : [value, value];
+    const fallbackSource = Array.isArray(fallback) ? fallback : [fallback, fallback];
+    const first = Number.isFinite(Number(source[0])) ? Number(source[0]) : Number(fallbackSource[0]);
+    const second = Number.isFinite(Number(source[1])) ? Number(source[1]) : Number(fallbackSource[1] ?? fallbackSource[0]);
+    const low = clamp(Math.min(first, second), min, max);
+    const high = clamp(Math.max(first, second), min, max);
+    return [low, high];
+  }
+
+  function pickRange(range, fallback = 0) {
+    const normalized = normalizeRange(range, fallback);
+    return rand(normalized[0], normalized[1]);
+  }
+
+  function normalizeCustomPath(path) {
+    if (!path || typeof path !== "object") {
+      return { mode: "auto", points: [], curve: 0.68 };
+    }
+    const mode = path.mode === "draw" ? "draw" : path.mode === "points" ? "points" : "auto";
+    const rawCurve = Number(path.curve ?? path.smoothness ?? 0.68);
+    const curve = Number.isFinite(rawCurve) ? clamp(rawCurve, 0, 1) : 0.68;
+    const points = (Array.isArray(path.points) ? path.points : [])
+      .map((point) => ({
+        x: clamp(Number(point?.x), 0, 1),
+        y: clamp(Number(point?.y), 0, 1),
+      }))
+      .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+      .slice(0, 96);
+    return {
+      mode: points.length >= 2 ? mode : "auto",
+      points: points.length >= 2 ? simplifyCustomPath(points) : [],
+      curve,
+    };
+  }
+
+  function simplifyCustomPath(points) {
+    if (points.length <= 48) return points;
+    const simplified = [points[0]];
+    const step = (points.length - 1) / 46;
+    for (let index = 1; index < 47; index += 1) {
+      simplified.push(points[Math.round(index * step)]);
+    }
+    simplified.push(points[points.length - 1]);
+    return simplified;
+  }
+
+  function normalizeCustomBubbleTemplate(template, index) {
+    if (!template || typeof template !== "object") return null;
+    const trajectoryChoices = ["straight", "softS", "arc", "zigzag", "spray", "fan", "sGroup", "arcDuo"];
+    const edgeChoices = ["random", "left", "right", "top", "bottom"];
+    const colorChoices = ["auto", "random", "background", "left", "right"];
+    const tapCount = clamp(Math.round(Number(template.tapCount ?? template.tapRequired ?? 1)), 0, 9);
+    const holdMs = clamp(Math.round(Number(template.holdMs ?? template.holdRequiredMs ?? 0)), 0, 5000);
+    return {
+      id: String(template.id || `bubble-${index + 1}`),
+      label: String(template.label || template.name || `Bubble ${index + 1}`).slice(0, 28),
+      weight: clamp(Number(template.weight ?? 1), 0.05, 20),
+      levelMin: clamp(Math.round(Number(template.levelMin ?? template.minLevel ?? 1)), 1, 99),
+      levelMax: clamp(Math.round(Number(template.levelMax ?? template.maxLevel ?? 99)), 1, 99),
+      count: normalizeRange(template.count ?? template.repeat, [1, 1], 1, 8),
+      spacingMs: normalizeRange(template.spacingMs ?? template.delayMs, [70, 130], 0, 1400),
+      size: normalizeRange(template.size ?? template.radius, [30, 44], 14, 86),
+      speed: normalizeRange(template.speed, [48, 82], 8, 260),
+      tapCount: tapCount <= 0 && holdMs <= 0 ? 1 : tapCount,
+      holdMs,
+      edge: edgeChoices.includes(template.edge) ? template.edge : "random",
+      lane: normalizeRange(template.lane, [0.22, 0.78], 0.08, 0.92),
+      aimX: normalizeRange(template.aimX ?? template.aim?.x, [0.3, 0.7], 0.05, 0.95),
+      aimY: normalizeRange(template.aimY ?? template.aim?.y, [0.24, 0.76], 0.05, 0.95),
+      trajectory: trajectoryChoices.includes(template.trajectory) ? template.trajectory : "straight",
+      amplitude: normalizeRange(template.amplitude, [0, 12], 0, 64),
+      frequency: normalizeRange(template.frequency, [1.4, 2.6], 0.4, 8),
+      arcBend: normalizeRange(template.arcBend, [0, 0], -110, 110),
+      arcLife: normalizeRange(template.arcLife, [2.1, 3.2], 0.5, 8),
+      colorMode: colorChoices.includes(template.colorMode ?? template.color) ? (template.colorMode ?? template.color) : "auto",
+      path: normalizeCustomPath(template.path),
+    };
+  }
+
+  function normalizeCustomBubblePack(input) {
+    let pack = input;
+    if (typeof pack === "string") {
+      try {
+        pack = JSON.parse(pack);
+      } catch {
+        return null;
+      }
+    }
+    if (!pack || typeof pack !== "object") return null;
+    const bubbles = (Array.isArray(pack.bubbles) ? pack.bubbles : [])
+      .map(normalizeCustomBubbleTemplate)
+      .filter(Boolean);
+    if (!bubbles.length) return null;
+    const spawn = pack.spawn && typeof pack.spawn === "object" ? pack.spawn : {};
+    return {
+      schema: customPackSchema,
+      name: String(pack.name || "Custom bubble pack").slice(0, 40),
+      description: String(pack.description || "").slice(0, 160),
+      spawn: {
+        minLevel: clamp(Math.round(Number(spawn.minLevel ?? 1)), 1, 99),
+        chance: clamp(Number(spawn.chance ?? 0.72), 0, 1),
+        intervalMs: normalizeRange(spawn.intervalMs, [520, 920], 160, 2400),
+        maxActive: clamp(Math.round(Number(spawn.maxActive ?? maxActiveBubbles)), 1, maxActiveBubbles),
+      },
+      bubbles,
+    };
+  }
+
+  function loadCustomBubblePack() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("pack") === "off") {
+      return null;
+    }
+    if (params.get("pack") === "clear") {
+      try {
+        window.localStorage.removeItem(customPackStorageKey);
+      } catch {
+        return null;
+      }
+      return null;
+    }
+    try {
+      return normalizeCustomBubblePack(window.localStorage.getItem(customPackStorageKey));
+    } catch {
+      return null;
+    }
+  }
+
+  function saveCustomBubblePack(pack) {
+    const normalized = normalizeCustomBubblePack(pack);
+    try {
+      if (normalized) {
+        window.localStorage.setItem(customPackStorageKey, JSON.stringify(normalized));
+      } else {
+        window.localStorage.removeItem(customPackStorageKey);
+      }
+    } catch {
+      return null;
+    }
+    return normalized;
+  }
+
   function colorWithAlpha(hex, alpha) {
     const value = hex.replace("#", "");
     const r = parseInt(value.slice(0, 2), 16);
@@ -251,6 +408,10 @@
     state.floaters = [];
     state.hints = [];
     state.activePointerId = null;
+    state.customHoldPointerId = null;
+    state.customHoldBubbleUid = null;
+    state.catHoldPointerId = null;
+    state.catHoldBubbleId = null;
   }
 
   function updatePerfDebug(now = performance.now(), force = false) {
@@ -988,6 +1149,14 @@
     state.nextPowerAt = 22000;
     state.nextStreamAt = 40000;
     state.nextSpawnAt = 120;
+    state.bubbleCounter = 0;
+    state.customBubblePack = loadCustomBubblePack();
+    state.customPackStatus = state.customBubblePack ? `PACK ${state.customBubblePack.name}` : "";
+    state.customPackLastSpawnAt = 0;
+    state.customHoldPointerId = null;
+    state.customHoldBubbleUid = null;
+    state.customHoldX = 0;
+    state.customHoldY = 0;
     state.catBubbleCounter = 0;
     state.catBubbleSpawned = 0;
     state.catMistakeCounting = false;
@@ -1301,7 +1470,10 @@
             y: rand(state.height * 0.24, state.height * 0.72),
           });
     const velocity = options.velocity ?? aimedVelocity(x, y, target, speed, isBleach ? 6 : kind === "normal" ? 12 : 26);
+    const customHoldRequiredMs = Math.max(0, Math.round(options.holdRequiredMs ?? options.customHoldRequiredMs ?? 0));
+    const customTapRequired = Math.max(0, Math.round(options.tapRequired ?? options.customTapRequired ?? 1));
     const bubble = {
+      uid: ++state.bubbleCounter,
       x,
       y,
       vx: velocity.vx,
@@ -1326,6 +1498,11 @@
       isBleach,
       isBomb,
       isCat,
+      customLabel: options.customLabel ?? "",
+      customHits: 0,
+      customTapRequired: customTapRequired <= 0 && customHoldRequiredMs <= 0 ? 1 : customTapRequired,
+      customHoldMs: 0,
+      customHoldRequiredMs,
       catId: isCat ? ++state.catBubbleCounter : 0,
       catHits: 0,
       catHoldMs: 0,
@@ -1348,6 +1525,7 @@
       streamFrequency: options.streamFrequency ?? 3.6,
       arcBend: options.arcBend ?? 0,
       arcLife: options.arcLife ?? 2.8,
+      customPath: options.customPath ?? null,
       openReady: false,
       wobble: rand(0, Math.PI * 2),
       wobbleSpeed: options.isStream ? rand(0.6, 1.05) : rand(1.1, 2.2),
@@ -1810,6 +1988,301 @@
     return false;
   }
 
+  function customTemplatesForLevel(level) {
+    const pack = state.customBubblePack;
+    if (!pack || level < pack.spawn.minLevel) return [];
+    return pack.bubbles.filter((template) => level >= template.levelMin && level <= template.levelMax && template.weight > 0);
+  }
+
+  function chooseCustomTemplate(templates) {
+    const total = templates.reduce((sum, template) => sum + template.weight, 0);
+    let roll = Math.random() * total;
+    for (const template of templates) {
+      roll -= template.weight;
+      if (roll <= 0) return template;
+    }
+    return templates[templates.length - 1] ?? null;
+  }
+
+  function edgeForCustomTemplate(template) {
+    return template.edge === "random" ? pickSpawnEdge() : template.edge;
+  }
+
+  function customColorIndex(template, start) {
+    if (template.colorMode === "left") return 0;
+    if (template.colorMode === "right") return 1;
+    if (template.colorMode === "random") return pickColorIndex();
+    if (template.colorMode === "background") {
+      return backgroundColorIndexAt(clamp(start.x, 0, state.width), clamp(start.y, 0, state.height));
+    }
+    return pickBalancedColorIndex();
+  }
+
+  function customStartPoint(template, edge, radius, index, count) {
+    const axis = spawnAxisLength(edge);
+    const center = pickRange(template.lane, 0.5);
+    const laneSpread = count > 1 ? (index - (count - 1) / 2) * rand(0.026, 0.048) : 0;
+    const lane = clamp(center + laneSpread, 0.08, 0.92);
+    return pointFromEdge(edge, radius, lane * axis);
+  }
+
+  function customTargetPoint(template, edge, start, colorIndex) {
+    if (template.colorMode === "auto" && Math.random() < 0.38) {
+      return matchingPointForColorFromEdge(colorIndex, edge, start.y, start.x);
+    }
+    return {
+      x: pickRange(template.aimX, 0.5) * state.width,
+      y: pickRange(template.aimY, 0.5) * state.height,
+    };
+  }
+
+  function customTrajectoryOptions(template, index) {
+    const trajectory = template.trajectory;
+    const amplitude = pickRange(template.amplitude, 0);
+    const frequency = pickRange(template.frequency, 1.8);
+    const arcBend = pickRange(template.arcBend, 0);
+    const useStream = trajectory !== "straight" || amplitude > 0;
+    const streamPattern =
+      trajectory === "straight"
+        ? "float"
+        : trajectory === "arc"
+          ? "arcDrift"
+          : trajectory === "fan"
+            ? "fan"
+            : trajectory;
+    return {
+      isStream: useStream,
+      streamPattern,
+      streamAmplitude: trajectory === "straight" ? amplitude * 0.35 : amplitude,
+      streamFrequency: frequency,
+      streamPhase: index * 0.58 + rand(0, Math.PI * 2),
+      arcBend,
+      arcLife: pickRange(template.arcLife, 2.6),
+    };
+  }
+
+  function pathEdgeFromPoint(point) {
+    const left = point.x;
+    const right = state.width - point.x;
+    const top = point.y;
+    const bottom = state.height - point.y;
+    const min = Math.min(left, right, top, bottom);
+    if (min === left) return "left";
+    if (min === right) return "right";
+    if (min === top) return "top";
+    return "bottom";
+  }
+
+  function customPathForTemplate(template, radius, speed, index, count) {
+    const points = template.path?.points;
+    if (!points || points.length < 2) return null;
+    const first = points[0];
+    const last = points[points.length - 1];
+    const dx = last.x - first.x;
+    const dy = last.y - first.y;
+    const length = Math.max(0.001, Math.hypot(dx, dy));
+    const offsetAmount = count > 1 ? (index - (count - 1) / 2) * radius * rand(0.62, 0.92) : 0;
+    const offsetX = (-dy / length) * offsetAmount + rand(-radius * 0.12, radius * 0.12);
+    const offsetY = (dx / length) * offsetAmount + rand(-radius * 0.12, radius * 0.12);
+    const pixelPoints = points.map((point) => ({
+      x: clamp(point.x * state.width + offsetX, radius * 0.35, state.width - radius * 0.35),
+      y: clamp(point.y * state.height + offsetY, radius * 0.35, state.height - radius * 0.35),
+    }));
+    const motionPoints = sampleCurvedCustomPath(pixelPoints, template.path.curve ?? 0.68, {
+      minX: radius * 0.35,
+      maxX: state.width - radius * 0.35,
+      minY: radius * 0.35,
+      maxY: state.height - radius * 0.35,
+    });
+    const segments = [];
+    let totalLength = 0;
+    for (let i = 1; i < motionPoints.length; i += 1) {
+      const segmentLength = Math.hypot(motionPoints[i].x - motionPoints[i - 1].x, motionPoints[i].y - motionPoints[i - 1].y);
+      totalLength += segmentLength;
+      segments.push(totalLength);
+    }
+    const duration = clamp(totalLength / Math.max(12, speed), 0.85, 9.5);
+    return {
+      mode: template.path.mode,
+      points: motionPoints,
+      segments,
+      totalLength,
+      duration,
+    };
+  }
+
+  function sampleCurvedCustomPath(points, curve = 0.68, bounds = {}) {
+    if (!points || points.length < 2) return points || [];
+    const strength = clamp(curve, 0, 1);
+    if (strength <= 0.01) return points;
+    const sampled = [points[0]];
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const p0 = points[Math.max(0, i - 1)];
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      const p3 = points[Math.min(points.length - 1, i + 2)];
+      const distance = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      const steps = clamp(Math.ceil(distance / 18), 5, 16);
+      for (let step = 1; step <= steps; step += 1) {
+        const t = step / steps;
+        sampled.push(clampPathPoint(blendCurvedPoint(points, p0, p1, p2, p3, t, strength), bounds));
+      }
+    }
+    return simplifyPixelPath(sampled, 112);
+  }
+
+  function blendCurvedPoint(allPoints, p0, p1, p2, p3, t, strength) {
+    const lineX = p1.x + (p2.x - p1.x) * t;
+    const lineY = p1.y + (p2.y - p1.y) * t;
+    if (allPoints.length === 2) {
+      const dx = p2.x - p1.x;
+      const dy = p2.y - p1.y;
+      const distance = Math.max(1, Math.hypot(dx, dy));
+      const bend = Math.sin(t * Math.PI) * distance * 0.18 * strength;
+      return { x: lineX - (dy / distance) * bend, y: lineY + (dx / distance) * bend };
+    }
+    const t2 = t * t;
+    const t3 = t2 * t;
+    const curveX =
+      0.5 *
+      (2 * p1.x +
+        (-p0.x + p2.x) * t +
+        (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
+        (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3);
+    const curveY =
+      0.5 *
+      (2 * p1.y +
+        (-p0.y + p2.y) * t +
+        (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
+        (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3);
+    return {
+      x: lineX + (curveX - lineX) * strength,
+      y: lineY + (curveY - lineY) * strength,
+    };
+  }
+
+  function clampPathPoint(point, bounds) {
+    return {
+      x: clamp(point.x, bounds.minX ?? 0, bounds.maxX ?? state.width),
+      y: clamp(point.y, bounds.minY ?? 0, bounds.maxY ?? state.height),
+    };
+  }
+
+  function simplifyPixelPath(points, maxPoints) {
+    if (points.length <= maxPoints) return points;
+    const simplified = [points[0]];
+    const step = (points.length - 1) / (maxPoints - 2);
+    for (let index = 1; index < maxPoints - 1; index += 1) {
+      simplified.push(points[Math.round(index * step)]);
+    }
+    simplified.push(points[points.length - 1]);
+    return simplified;
+  }
+
+  function pointAtCustomPath(path, amount) {
+    const points = path.points;
+    if (!points?.length) return null;
+    if (points.length === 1 || amount <= 0) return points[0];
+    if (amount >= 1) return points[points.length - 1];
+    const targetLength = path.totalLength * amount;
+    let previousLength = 0;
+    for (let i = 1; i < points.length; i += 1) {
+      const currentLength = path.segments[i - 1];
+      if (targetLength <= currentLength) {
+        const segmentLength = Math.max(0.001, currentLength - previousLength);
+        const t = clamp((targetLength - previousLength) / segmentLength, 0, 1);
+        return {
+          x: points[i - 1].x + (points[i].x - points[i - 1].x) * t,
+          y: points[i - 1].y + (points[i].y - points[i - 1].y) * t,
+        };
+      }
+      previousLength = currentLength;
+    }
+    return points[points.length - 1];
+  }
+
+  function advanceCustomPathBubble(bubble, dt) {
+    const path = bubble.customPath;
+    if (!path?.points?.length) return false;
+    path.elapsed = Math.min(path.duration, (path.elapsed ?? 0) + dt);
+    const amount = clamp(path.elapsed / Math.max(0.001, path.duration), 0, 1);
+    const point = pointAtCustomPath(path, amount);
+    const next = pointAtCustomPath(path, Math.min(1, amount + 0.012));
+    if (!point) return false;
+    if (next) {
+      bubble.vx = (next.x - point.x) / 0.012 / path.duration;
+      bubble.vy = (next.y - point.y) / 0.012 / path.duration;
+    }
+    bubble.x = point.x;
+    bubble.y = point.y;
+    if (path.elapsed >= path.duration) {
+      bubble.customPath = null;
+    }
+    return true;
+  }
+
+  function spawnCustomTemplateBubble(template, index, count) {
+    const radius = pickRange(template.size, 38);
+    const speed = pickRange(template.speed, 68);
+    const customPath = customPathForTemplate(template, radius, speed, index, count);
+    const edge = customPath ? pathEdgeFromPoint(customPath.points[0]) : edgeForCustomTemplate(template);
+    let start = customPath ? customPath.points[0] : customStartPoint(template, edge, radius, index, count);
+    let colorIndex = customColorIndex(template, start);
+    for (let attempt = 0; !customPath && attempt < 5 && spawnPointCrowded(start.x, start.y, radius, colorIndex); attempt += 1) {
+      start = customStartPoint(template, edge, radius, index + attempt * 0.37, count + attempt * 0.2);
+      colorIndex = customColorIndex(template, start);
+    }
+    if (spawnPointCrowded(start.x, start.y, radius, colorIndex)) return false;
+
+    const target = customPath ? customPath.points[customPath.points.length - 1] : customTargetPoint(template, edge, start, colorIndex);
+    const velocity = aimedVelocity(start.x, start.y, target, speed, 4);
+    return spawnBubble(radius <= 28, "normal", {
+      edge,
+      x: start.x,
+      y: start.y,
+      colorIndex,
+      target,
+      velocity,
+      radius,
+      speed,
+      ...(customPath ? {} : customTrajectoryOptions(template, index)),
+      customPath,
+      delay: (index * pickRange(template.spacingMs, 90)) / 1000,
+      tapRequired: template.tapCount,
+      holdRequiredMs: template.holdMs,
+      customLabel: template.label,
+      quietHint: index > 0,
+    });
+  }
+
+  function scheduleCustomPackSpawn(count = 1) {
+    const pack = state.customBubblePack;
+    const interval = pickRange(pack?.spawn?.intervalMs, [520, 920]);
+    state.nextSpawnAt = state.elapsed + interval + Math.max(0, count - 1) * 52;
+  }
+
+  function trySpawnCustomPackWave(remainingStage) {
+    const pack = state.customBubblePack;
+    if (!pack || remainingStage <= 0) return false;
+    if (state.bubbles.length >= Math.min(maxActiveBubbles, pack.spawn.maxActive)) return false;
+    if (Math.random() > pack.spawn.chance) return false;
+    const templates = customTemplatesForLevel(displayDifficultyLevel());
+    const template = chooseCustomTemplate(templates);
+    if (!template) return false;
+
+    const desiredCount = Math.round(pickRange(template.count, 1));
+    const count = Math.min(desiredCount, remainingStage, Math.max(0, maxActiveBubbles - state.bubbles.length));
+    let spawned = 0;
+    for (let index = 0; index < count; index += 1) {
+      if (spawnCustomTemplateBubble(template, index, count)) spawned += 1;
+    }
+    if (spawned <= 0) return false;
+    state.customPackLastSpawnAt = state.elapsed;
+    state.customPackStatus = `${pack.name} · ${template.label}`;
+    scheduleCustomPackSpawn(spawned);
+    return true;
+  }
+
   function targetForArchetype(flow, region, start, colorIndex) {
     if (flow.type === "bigRise") {
       return {
@@ -2062,6 +2535,10 @@
 
     if (state.bubbles.length >= maxActiveBubbles) {
       scheduleFlowSpawn(flow);
+      return;
+    }
+
+    if (trySpawnCustomPackWave(remainingStage)) {
       return;
     }
 
@@ -2550,6 +3027,92 @@
     }
   }
 
+  function customBubbleNeedsClear(bubble) {
+    if (!bubble || bubble.isCat || bubble.isBleach || bubble.isBomb || bubble.isClear) return false;
+    const tapRequired = bubble.customTapRequired ?? 1;
+    const holdRequired = bubble.customHoldRequiredMs ?? 0;
+    return tapRequired > 1 || tapRequired === 0 || holdRequired > 0;
+  }
+
+  function customBubbleByUid(uid) {
+    return state.bubbles.find((bubble) => bubble.uid === uid) ?? null;
+  }
+
+  function clearCustomHoldForBubble(bubble) {
+    if (!bubble || state.customHoldBubbleUid !== bubble.uid) return;
+    state.customHoldPointerId = null;
+    state.customHoldBubbleUid = null;
+  }
+
+  function finishCustomBubble(bubble, hitX, hitY, reason = "tap") {
+    const index = state.bubbles.indexOf(bubble);
+    if (index < 0) return;
+    clearCustomHoldForBubble(bubble);
+    popBubble(bubble, index, hitX, hitY);
+    if (reason === "hold") {
+      state.flash = Math.max(state.flash, 0.16);
+    }
+  }
+
+  function hitCustomBubble(bubble, pointerId, hitX, hitY) {
+    const tapRequired = bubble.customTapRequired ?? 1;
+    const holdRequired = bubble.customHoldRequiredMs ?? 0;
+    if (holdRequired > 0) {
+      state.customHoldPointerId = pointerId ?? state.activePointerId;
+      state.customHoldBubbleUid = bubble.uid;
+      state.customHoldX = hitX;
+      state.customHoldY = hitY;
+    }
+    if (tapRequired > 0) {
+      bubble.customHits = Math.min((bubble.customHits ?? 0) + 1, tapRequired);
+    }
+    const hits = bubble.customHits ?? 0;
+    const color = bubble.colorIndex >= 0 ? palette[bubble.colorIndex] : openTone;
+    state.ripples.push({
+      x: bubble.x,
+      y: bubble.y,
+      radius: bubble.radius * (0.38 + Math.min(0.32, hits * 0.08)),
+      age: 0,
+      life: 0.2,
+      color: color.light,
+      power: 0.48,
+    });
+    if (tapRequired > 0 && hits >= tapRequired) {
+      finishCustomBubble(bubble, hitX, hitY, "tap");
+      return;
+    }
+    const label = tapRequired > 0 ? `${hits}/${tapRequired}` : "HOLD";
+    makeFloatText(bubble.x, bubble.y - bubble.radius, label, color.light, 0.9);
+    vibratePop(6);
+    playPop("small");
+    updateHud();
+  }
+
+  function updateCustomBubbleHold(dt) {
+    if (state.customHoldPointerId === null || state.customHoldBubbleUid === null) return;
+    const bubble = customBubbleByUid(state.customHoldBubbleUid);
+    if (!bubble || bubble.age < 0 || !customBubbleNeedsClear(bubble)) {
+      state.customHoldPointerId = null;
+      state.customHoldBubbleUid = null;
+      return;
+    }
+    const required = bubble.customHoldRequiredMs ?? 0;
+    if (required <= 0) return;
+
+    const dx = state.customHoldX - bubble.x;
+    const dy = state.customHoldY - bubble.y;
+    const inside = dx * dx + dy * dy <= (bubble.radius * 1.08) * (bubble.radius * 1.08);
+    if (!inside || !canPopBubble(bubble, state.customHoldX, state.customHoldY)) {
+      bubble.customHoldMs = Math.max(0, (bubble.customHoldMs ?? 0) - dt * 700);
+      return;
+    }
+
+    bubble.customHoldMs = Math.min(required, (bubble.customHoldMs ?? 0) + dt * 1000);
+    if (bubble.customHoldMs >= required) {
+      finishCustomBubble(bubble, state.customHoldX, state.customHoldY, "hold");
+    }
+  }
+
   function hitBleachBubble(bubble, index, hitX, hitY) {
     if (state.elapsed < (bubble.bleachHitCooldownUntil ?? 0)) return;
     bubble.bleachHitCooldownUntil = state.elapsed + 140;
@@ -2616,6 +3179,7 @@
       return;
     }
 
+    clearCustomHoldForBubble(bubble);
     state.bubbles.splice(index, 1);
     state.poppedCount += 1;
     chargeClearSkillByBubble(bubble);
@@ -2925,7 +3489,13 @@
           return true;
         }
         if (canPopBubble(bubble, x, y)) {
-          popBubble(bubble, i, x, y);
+          if (customBubbleNeedsClear(bubble)) {
+            if (isTap) {
+              hitCustomBubble(bubble, pointerId, x, y);
+            }
+          } else {
+            popBubble(bubble, i, x, y);
+          }
         } else {
           missBubble(bubble, i, isTap);
         }
@@ -2961,6 +3531,10 @@
       state.catHoldX = x;
       state.catHoldY = y;
     }
+    if (state.customHoldPointerId === event.pointerId) {
+      state.customHoldX = x;
+      state.customHoldY = y;
+    }
     const dx = x - state.lastSwipeX;
     const dy = y - state.lastSwipeY;
     const distance = Math.hypot(dx, dy);
@@ -2983,6 +3557,10 @@
     if (state.catHoldPointerId === event.pointerId) {
       state.catHoldPointerId = null;
       state.catHoldBubbleId = null;
+    }
+    if (state.customHoldPointerId === event.pointerId) {
+      state.customHoldPointerId = null;
+      state.customHoldBubbleUid = null;
     }
   }
 
@@ -3013,6 +3591,7 @@
     maybeAdvanceStage();
     maybeActivateCatBubbleSystem();
     updateCatBubbleHold(dt);
+    updateCustomBubbleHold(dt);
 
     for (let i = state.bubbles.length - 1; i >= 0; i -= 1) {
       const bubble = state.bubbles[i];
@@ -3044,9 +3623,11 @@
       }
       bubble.wobble += bubble.wobbleSpeed * dt;
       updateBubbleMatchDwell(bubble, dt);
-      steerBubbleTowardMatch(bubble, dt, d);
-      keepBubbleMoving(bubble, d);
-      separateBubbleFromNeighbors(bubble, i, d, dt);
+      if (!bubble.customPath) {
+        steerBubbleTowardMatch(bubble, dt, d);
+        keepBubbleMoving(bubble, d);
+        separateBubbleFromNeighbors(bubble, i, d, dt);
+      }
       const speed = Math.max(1, Math.hypot(bubble.vx, bubble.vy));
       const streamWave = bubble.isStream
         ? Math.sin(bubble.age * bubble.streamFrequency + bubble.streamPhase) *
@@ -3060,8 +3641,10 @@
         ? Math.sin(clamp(bubble.age / Math.max(0.4, bubble.arcLife), 0, 1) * Math.PI) * bubble.arcBend
         : 0;
       const curvePush = streamWave + arcPush;
-      bubble.x += (bubble.vx + sway * bubble.drift + perpX * curvePush) * dt;
-      bubble.y += (bubble.vy + (bubble.isStream ? 0 : Math.cos(bubble.wobble * 0.7) * 10) + perpY * curvePush) * dt;
+      if (!advanceCustomPathBubble(bubble, dt)) {
+        bubble.x += (bubble.vx + sway * bubble.drift + perpX * curvePush) * dt;
+        bubble.y += (bubble.vy + (bubble.isStream ? 0 : Math.cos(bubble.wobble * 0.7) * 10) + perpY * curvePush) * dt;
+      }
       bubble.radius = bubble.baseRadius * (1 + Math.sin(bubble.age * 4.2) * 0.028);
 
       const entered =
@@ -3571,6 +4154,41 @@
     return true;
   }
 
+  function drawCustomBubbleProgress(bubble, x, y, r, color) {
+    if (!customBubbleNeedsClear(bubble)) return;
+    const tapRequired = bubble.customTapRequired ?? 1;
+    const holdRequired = bubble.customHoldRequiredMs ?? 0;
+    const tapProgress = tapRequired > 0 ? clamp((bubble.customHits ?? 0) / tapRequired, 0, 1) : 0;
+    const holdProgress = holdRequired > 0 ? clamp((bubble.customHoldMs ?? 0) / holdRequired, 0, 1) : 0;
+    const progress = Math.max(tapProgress, holdProgress);
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.arc(x, y, r + 8, 0, Math.PI * 2);
+    ctx.strokeStyle = colorWithAlpha(color.light, 0.18);
+    ctx.lineWidth = Math.max(1.6, r * 0.04);
+    ctx.stroke();
+    if (progress > 0) {
+      ctx.beginPath();
+      ctx.arc(x, y, r + 8, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+      ctx.strokeStyle = colorWithAlpha("#ffffff", 0.76);
+      ctx.lineWidth = Math.max(2.2, r * 0.065);
+      ctx.stroke();
+    }
+    if (tapRequired > 1 || tapRequired === 0) {
+      ctx.font = `800 ${Math.max(10, Math.round(r * 0.34))}px "Arial Rounded MT Bold", sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.lineWidth = Math.max(2.4, r * 0.1);
+      ctx.strokeStyle = "rgba(18, 37, 48, 0.56)";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+      const text = tapRequired > 0 ? `${bubble.customHits ?? 0}/${tapRequired}` : "H";
+      ctx.strokeText(text, x, y);
+      ctx.fillText(text, x, y);
+    }
+    ctx.restore();
+  }
+
   function drawBubble(bubble) {
     if (bubble.age < 0) {
       return;
@@ -3677,6 +4295,8 @@
     } else if (bubble.isClear) {
       drawClearMark(x, y, r);
     }
+
+    drawCustomBubbleProgress(bubble, x, y, r, color);
 
     ctx.restore();
   }
@@ -4272,6 +4892,65 @@
     updateDebugPanel();
   }
 
+  function updateCustomPackDevStatus(statusEl) {
+    if (!statusEl) return;
+    const pack = state.customBubblePack;
+    statusEl.textContent = pack ? `${pack.name} · ${pack.bubbles.length} templates` : "No custom pack";
+  }
+
+  function initCustomPackDevPanel() {
+    state.customBubblePack = loadCustomBubblePack();
+    const params = new URLSearchParams(window.location.search);
+    const shouldShow = params.has("dev") || Boolean(state.customBubblePack);
+    if (!shouldShow) return;
+
+    const panel = document.createElement("section");
+    panel.className = "dev-pack-panel";
+    const status = document.createElement("span");
+    status.className = "dev-pack-status";
+    const importButton = document.createElement("button");
+    importButton.type = "button";
+    importButton.textContent = "导入";
+    const clearButton = document.createElement("button");
+    clearButton.type = "button";
+    clearButton.textContent = "清空";
+    const editorButton = document.createElement("button");
+    editorButton.type = "button";
+    editorButton.textContent = "编辑器";
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json,.json";
+    input.hidden = true;
+    panel.append(status, importButton, clearButton, editorButton, input);
+    document.body.append(panel);
+    updateCustomPackDevStatus(status);
+
+    importButton.addEventListener("click", () => input.click());
+    input.addEventListener("change", () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.addEventListener("load", () => {
+        const normalized = saveCustomBubblePack(String(reader.result || ""));
+        state.customBubblePack = normalized;
+        state.customPackStatus = normalized ? `PACK ${normalized.name}` : "Pack import failed";
+        state.nextSpawnAt = Math.min(state.nextSpawnAt || state.elapsed + 120, state.elapsed + 120);
+        updateCustomPackDevStatus(status);
+      });
+      reader.readAsText(file);
+      input.value = "";
+    });
+    clearButton.addEventListener("click", () => {
+      state.customBubblePack = saveCustomBubblePack(null);
+      state.customPackStatus = "";
+      updateCustomPackDevStatus(status);
+    });
+    editorButton.addEventListener("click", () => {
+      window.location.href = "./editor.html";
+    });
+  }
+
+  initCustomPackDevPanel();
   startButton.addEventListener("click", playStartTransition);
   clearSkillButton.addEventListener("click", (event) => {
     event.preventDefault();
