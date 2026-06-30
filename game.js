@@ -3,7 +3,7 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false });
-  const buildVersion = "1.0.29";
+  const buildVersion = "1.1.0";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -32,8 +32,8 @@
   catBubbleImage.src = "./assets/cat-bubble.png";
   const bubbleSpriteCell = 192;
   const bubbleSpriteCols = 5;
-  const targetFrameMs = 1000 / 40;
-  const maxActiveBubbles = 10;
+  const targetFrameMs = 1000 / 30;
+  const maxActiveBubbles = 12;
   const maxParticles = 72;
   const maxRipples = 32;
   const maxBlasts = 4;
@@ -105,8 +105,12 @@
     score: 0,
     correctBubbleCount: 0,
     poppedCount: 0,
-    water: 76,
+    water: 75,
     waterPressure: 0,
+    hiddenLeak: 0,
+    hiddenLeakActive: false,
+    wrongStreak: 0,
+    lastUsefulActionAt: 0,
     combo: 0,
     bestCombo: 0,
     comboPulse: 0,
@@ -157,6 +161,7 @@
     catHoldY: 0,
     openUntil: 0,
     flash: 0,
+    mistakeFlash: 0,
     bubbles: [],
     particles: [],
     ripples: [],
@@ -191,6 +196,27 @@
   let lastHudWater = null;
   let waterGainUntil = 0;
   let waterDrainUntil = 0;
+  let waterShockUntil = 0;
+  let waterCriticalUntil = 0;
+  let lastWaterBand = "safe";
+  let waterLowVibrationArmed = true;
+  const mirrorBackgroundCanvas = document.createElement("canvas");
+  const mirrorBackgroundCtx = mirrorBackgroundCanvas.getContext("2d", { alpha: false, willReadFrequently: true });
+  let mirrorBackgroundData = null;
+  let mirrorBackgroundValues = new Float32Array(1);
+  let mirrorLowWidth = 1;
+  let mirrorLowHeight = 1;
+  let mirrorNxByX = new Float32Array(1);
+  let mirrorNyByY = new Float32Array(1);
+  let mirrorRowBlueR = new Float32Array(1);
+  let mirrorRowBlueG = new Float32Array(1);
+  let mirrorRowBlueB = new Float32Array(1);
+  let mirrorColPinkR = new Float32Array(1);
+  let mirrorColPinkG = new Float32Array(1);
+  let mirrorColPinkB = new Float32Array(1);
+  let mirrorLightY = new Float32Array(1);
+  let mirrorLightX = new Float32Array(1);
+  let mirrorContourSegments = [];
 
   function resize() {
     const rect = canvas.getBoundingClientRect();
@@ -200,6 +226,9 @@
     canvas.width = Math.floor(state.width * state.dpr);
     canvas.height = Math.floor(state.height * state.dpr);
     ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ensureMirrorBackgroundBuffer();
   }
 
   function rand(min, max) {
@@ -267,19 +296,27 @@
     const edgeChoices = ["random", "left", "right", "top", "bottom"];
     const colorChoices = ["auto", "random", "background", "left", "right"];
     const tapCount = clamp(Math.round(Number(template.tapCount ?? template.tapRequired ?? 1)), 0, 9);
-    const holdMs = clamp(Math.round(Number(template.holdMs ?? template.holdRequiredMs ?? 0)), 0, 5000);
+    const count = normalizeRange(template.count ?? template.repeat, [1, 1], 1, 12);
+    const size = normalizeRange(template.size ?? template.radius, [30, 44], 14, 86);
+    const bubbleCount = Math.round((count[0] + count[1]) * 0.5);
+    const sizes = Array.from({ length: bubbleCount }, (_, sizeIndex) => {
+      const raw = Array.isArray(template.sizes) ? Number(template.sizes[sizeIndex]) : NaN;
+      return clamp(Math.round(Number.isFinite(raw) ? raw : (size[0] + size[1]) * 0.5), 14, 86);
+    });
     return {
       id: String(template.id || `bubble-${index + 1}`),
       label: String(template.label || template.name || `Bubble ${index + 1}`).slice(0, 28),
       weight: clamp(Number(template.weight ?? 1), 0.05, 20),
       levelMin: clamp(Math.round(Number(template.levelMin ?? template.minLevel ?? 1)), 1, 99),
       levelMax: clamp(Math.round(Number(template.levelMax ?? template.maxLevel ?? 99)), 1, 99),
-      count: normalizeRange(template.count ?? template.repeat, [1, 1], 1, 8),
+      count,
+      spacing: normalizeRange(template.spacing ?? template.spacingPx, [8, 18], 0, 80),
       spacingMs: normalizeRange(template.spacingMs ?? template.delayMs, [70, 130], 0, 1400),
-      size: normalizeRange(template.size ?? template.radius, [30, 44], 14, 86),
+      size,
+      sizes,
       speed: normalizeRange(template.speed, [48, 82], 8, 260),
-      tapCount: tapCount <= 0 && holdMs <= 0 ? 1 : tapCount,
-      holdMs,
+      tapCount: tapCount <= 0 ? 1 : tapCount,
+      holdMs: 0,
       edge: edgeChoices.includes(template.edge) ? template.edge : "random",
       lane: normalizeRange(template.lane, [0.22, 0.78], 0.08, 0.92),
       aimX: normalizeRange(template.aimX ?? template.aim?.x, [0.3, 0.7], 0.05, 0.95),
@@ -451,12 +488,12 @@
   function levelWaterDrainRate(level) {
     const p = clamp((level - 1) / 14, 0, 1);
     return clamp(
-      0.52 +
-        p * 0.8 +
-        smoothstep(1, 5, level) * 0.3 +
-        smoothstep(5, 11, level) * 0.22,
-      0.52,
-      1.82,
+      1.16 +
+        p * 1.15 +
+        smoothstep(1, 5, level) * 0.42 +
+        smoothstep(5, 11, level) * 0.34,
+      1.16,
+      3.05,
     );
   }
 
@@ -686,13 +723,36 @@
   }
 
   function backgroundAxes(layout = backgroundLayoutAt()) {
-    const angle = layout.angle ?? 0;
+    const cornerPower = levelThreeCornerPower();
+    const cornerElapsed = Math.max(0, state.elapsed - state.stageStartAt);
+    const cornerAngle = Math.PI * 0.31 + Math.sin(cornerElapsed / 6200) * 0.035;
+    const angle = (layout.angle ?? 0) + (cornerAngle - (layout.angle ?? 0)) * cornerPower;
     return {
       nx: Math.cos(angle),
       ny: Math.sin(angle),
       tx: -Math.sin(angle),
       ty: Math.cos(angle),
     };
+  }
+
+  function levelThreeCornerPower() {
+    if (displayDifficultyLevel() !== 3) return 0;
+    return smoothstep(0, 2600, Math.max(0, state.elapsed - state.stageStartAt));
+  }
+
+  function levelThreeCornerTravel() {
+    const elapsed = Math.max(0, state.elapsed - state.stageStartAt);
+    return smoothstep(0, 1, clamp(elapsed / 15800, 0, 1));
+  }
+
+  function bellCurve(value, center, width) {
+    const distance = (value - center) / Math.max(0.001, width);
+    return Math.exp(-distance * distance * 0.5);
+  }
+
+  function levelFiveTidePower() {
+    if (displayDifficultyLevel() !== 5) return 0;
+    return smoothstep(0, 2600, Math.max(0, state.elapsed - state.stageStartAt));
   }
 
   function backgroundBoundaryOffsetAt(tangent, layout = backgroundLayoutAt(), time = state.visualTime) {
@@ -702,7 +762,34 @@
     const broad = Math.sin((u * 0.42 + layout.phase * 0.62 + 0.18) * Math.PI * 2) * layout.curve * 0.52;
     const smallFlow = Math.sin(u * Math.PI * 2.1 + time / 36000) * (0.008 + levelAmount * 0.008);
     const breathe = Math.sin(time / 26000) * (0.012 + levelAmount * 0.012);
-    return layout.split - 0.5 + curve + broad + smallFlow + breathe;
+    const cornerPower = levelThreeCornerPower();
+    const cornerTime = Math.max(0, state.elapsed - state.stageStartAt);
+    const cornerTravel = levelThreeCornerTravel();
+    const cornerWidth = 0.62;
+    const retreatCorner = bellCurve(tangent, -0.72, cornerWidth);
+    const arrivingCorner = bellCurve(tangent, 0.72, cornerWidth);
+    const travelingCorner = bellCurve(tangent, -0.72 + cornerTravel * 1.44, 0.52);
+    const retreatStrength = 0.2 + (1 - cornerTravel) * 0.16;
+    const arrivingStrength = 0.2 + cornerTravel * 0.16;
+    const cornerSweep = (cornerTravel - 0.5) * 0.085;
+    const cornerWave =
+      Math.sin(tangent * Math.PI * 2.3 + cornerTime / 860) * 0.026 +
+      Math.sin(tangent * Math.PI * 4.1 - cornerTime / 1320 + 0.7) * 0.012;
+    const cornerFlow =
+      cornerPower *
+      (arrivingCorner * arrivingStrength -
+        retreatCorner * retreatStrength +
+        travelingCorner * 0.08 +
+        cornerSweep +
+        cornerWave * 0.72);
+    const tidePower = levelFiveTidePower();
+    const tideTime = Math.max(0, state.elapsed - state.stageStartAt);
+    const tide =
+      tidePower *
+      (Math.sin(u * Math.PI * 3.15 + tideTime / 760) * 0.038 +
+        Math.sin(u * Math.PI * 5.2 - tideTime / 1180 + 0.6) * 0.018 +
+        Math.sin(tideTime / 1320) * 0.022);
+    return layout.split - 0.5 + curve + broad + smallFlow + breathe + cornerFlow + tide;
   }
 
   function backgroundSignedAt(x, y, time = state.visualTime) {
@@ -1059,6 +1146,22 @@
     };
   }
 
+  function waterBandFor(value) {
+    if (value <= 8) return "critical";
+    if (value <= 18) return "danger";
+    if (value <= 32) return "low";
+    if (value <= 48) return "warn";
+    return "safe";
+  }
+
+  function waterBandRank(band) {
+    if (band === "critical") return 4;
+    if (band === "danger") return 3;
+    if (band === "low") return 2;
+    if (band === "warn") return 1;
+    return 0;
+  }
+
   function updateHud() {
     const water = Math.round(Math.max(0, Math.min(100, state.water)));
     const exactWater = Math.max(0, Math.min(100, state.water));
@@ -1066,20 +1169,48 @@
     if (lastHudWater !== null) {
       const diff = exactWater - lastHudWater;
       if (diff > 0.05) {
-        waterGainUntil = state.elapsed + 420;
+        waterGainUntil = state.elapsed + clamp(420 + diff * 42, 420, 820);
       } else if (diff < -0.012) {
-        waterDrainUntil = state.elapsed + 260;
+        const drop = Math.abs(diff);
+        waterDrainUntil = state.elapsed + clamp(340 + drop * 48, 360, 860);
+        if (drop >= 0.34) {
+          waterShockUntil = state.elapsed + clamp(240 + drop * 44, 280, 720);
+        }
       }
     }
+    const waterBand = waterBandFor(water);
+    const bandRank = waterBandRank(waterBand);
+    const previousBandRank = waterBandRank(lastWaterBand);
+    if (state.running && exactWater < 30 && waterLowVibrationArmed) {
+      waterLowVibrationArmed = false;
+      waterCriticalUntil = Math.max(waterCriticalUntil, state.elapsed + 520);
+      if (navigator.vibrate) {
+        navigator.vibrate(20);
+      }
+    } else if (exactWater > 36) {
+      waterLowVibrationArmed = true;
+    }
+    if (state.running && bandRank > previousBandRank) {
+      waterCriticalUntil = state.elapsed + (waterBand === "critical" ? 980 : waterBand === "danger" ? 720 : 440);
+      if ((waterBand === "danger" || waterBand === "critical") && navigator.vibrate) {
+        navigator.vibrate(waterBand === "critical" ? [18, 36, 18] : 18);
+      }
+    }
+    lastWaterBand = waterBand;
     lastHudWater = exactWater;
     waterFill.style.width = `${water}%`;
     waterValue.textContent = `${water}%`;
-    waterBlock.classList.toggle("low", water <= 28);
+    waterBlock.classList.toggle("warn", water <= 48);
+    waterBlock.classList.toggle("low", water <= 32);
+    waterBlock.classList.toggle("danger", water <= 18);
+    waterBlock.classList.toggle("critical", water <= 8);
     waterBlock.classList.toggle("pulse", state.comboPulse > 0.16);
     waterBlock.classList.toggle("open", openActive);
     waterBlock.classList.toggle("combo-hot", state.combo >= 5);
     waterBlock.classList.toggle("gain", state.running && state.elapsed < waterGainUntil);
     waterBlock.classList.toggle("drain", state.running && state.elapsed < waterDrainUntil && state.elapsed >= waterGainUntil);
+    waterBlock.classList.toggle("shock", state.running && state.elapsed < waterShockUntil);
+    waterBlock.classList.toggle("critical-flash", state.running && state.elapsed < waterCriticalUntil);
     comboChip.style.setProperty("--combo-left", comboProgress().toFixed(3));
     const rank = comboRank();
     comboChip.dataset.rank = rank;
@@ -1116,11 +1247,19 @@
     state.score = 0;
     state.correctBubbleCount = 0;
     state.poppedCount = 0;
-    state.water = 76;
+    state.water = 75;
     lastHudWater = null;
     waterGainUntil = 0;
     waterDrainUntil = 0;
+    waterShockUntil = 0;
+    waterCriticalUntil = 0;
+    lastWaterBand = "safe";
+    waterLowVibrationArmed = true;
     state.waterPressure = 0;
+    state.hiddenLeak = 0;
+    state.hiddenLeakActive = false;
+    state.wrongStreak = 0;
+    state.lastUsefulActionAt = 0;
     resetCombo({ recovery: false });
     state.bestCombo = 0;
     state.comboRecoveryUntil = 0;
@@ -1172,6 +1311,7 @@
     resetBackgroundFlow();
     state.openUntil = 0;
     state.flash = 0;
+    state.mistakeFlash = 0;
     clearRuntimeEffects();
     state.lastSwipeX = 0;
     state.lastSwipeY = 0;
@@ -1191,6 +1331,12 @@
 
   function endGame() {
     if (!state.running) return;
+    waterShockUntil = Math.max(waterShockUntil, state.elapsed + 720);
+    waterCriticalUntil = Math.max(waterCriticalUntil, state.elapsed + 1100);
+    lastWaterBand = "critical";
+    if (navigator.vibrate) {
+      navigator.vibrate([22, 38, 22]);
+    }
     state.running = false;
     curtain.classList.remove("hidden");
     if (titleMark) {
@@ -1217,6 +1363,7 @@
     );
     clearRuntimeEffects();
     updateHud();
+    draw();
     updatePerfDebug(performance.now(), true);
   }
 
@@ -1246,8 +1393,8 @@
   function baseWaterDrainRate() {
     const level = displayDifficultyLevel();
     const p = clamp((level - 1) / 18, 0, 1);
-    const stageTension = smoothstep(0.55, 1, stageCompletion()) * (0.06 + p * 0.16);
-    return clamp(levelWaterDrainRate(level) + stageTension, 0.52, 1.98);
+    const stageTension = smoothstep(0.55, 1, stageCompletion()) * (0.08 + p * 0.2);
+    return clamp(levelWaterDrainRate(level) + stageTension, 1.16, 3.32);
   }
 
   function waterPressureHorizon() {
@@ -1256,13 +1403,61 @@
 
   function waterDrainRate() {
     const pressureRate = state.waterPressure / waterPressureHorizon();
-    return baseWaterDrainRate() + pressureRate * requiredCorrectRate() * 0.18;
+    return baseWaterDrainRate() + pressureRate * requiredCorrectRate() * 0.18 + hiddenLeakDrainRate();
+  }
+
+  function hiddenLeakWrongLimit() {
+    const level = displayDifficultyLevel();
+    if (level >= 9) return 2;
+    if (level >= 4) return 3;
+    return 4;
+  }
+
+  function hiddenLeakIdleLimit() {
+    const level = displayDifficultyLevel();
+    return 9000 - smoothstep(1, 8, level) * 2600 - smoothstep(8, 16, level) * 1300;
+  }
+
+  function hiddenLeakDrainRate() {
+    if (!state.hiddenLeakActive && state.hiddenLeak <= 0) return 0;
+    const level = displayDifficultyLevel();
+    const p = clamp((level - 1) / 14, 0, 1);
+    return state.hiddenLeak * (1.55 + p * 1.05 + smoothstep(5, 12, level) * 0.55);
+  }
+
+  function noteUsefulAction() {
+    state.lastUsefulActionAt = state.elapsed;
+    state.wrongStreak = 0;
+    state.hiddenLeak = 0;
+    state.hiddenLeakActive = false;
+  }
+
+  function noteWrongAction() {
+    state.wrongStreak += 1;
+    if (state.wrongStreak >= hiddenLeakWrongLimit()) {
+      state.hiddenLeakActive = true;
+      state.hiddenLeak = Math.max(state.hiddenLeak, clamp(0.46 + (state.wrongStreak - hiddenLeakWrongLimit()) * 0.18, 0, 1));
+    }
+  }
+
+  function updateHiddenLeak(dt) {
+    if (!state.running) return;
+    const idleOver = state.elapsed - state.lastUsefulActionAt - hiddenLeakIdleLimit();
+    if (idleOver > 0) {
+      state.hiddenLeakActive = true;
+      state.hiddenLeak = Math.max(state.hiddenLeak, clamp(idleOver / 4200, 0.18, 1));
+    }
+    if (!state.hiddenLeakActive) {
+      state.hiddenLeak = Math.max(0, state.hiddenLeak - dt * 2.6);
+      return;
+    }
+    state.hiddenLeak = clamp(state.hiddenLeak + dt * 0.18, 0, 1);
   }
 
   function drainWater(dt) {
     const pressureRate = state.waterPressure / waterPressureHorizon();
     state.waterPressure = Math.max(0, state.waterPressure - pressureRate * dt);
-    state.water -= (baseWaterDrainRate() + pressureRate * requiredCorrectRate() * 0.18) * dt;
+    state.water -= waterDrainRate() * dt;
   }
 
   function formatWaterGain(value) {
@@ -2081,9 +2276,13 @@
     const dx = last.x - first.x;
     const dy = last.y - first.y;
     const length = Math.max(0.001, Math.hypot(dx, dy));
-    const offsetAmount = count > 1 ? (index - (count - 1) / 2) * radius * rand(0.62, 0.92) : 0;
-    const offsetX = (-dy / length) * offsetAmount + rand(-radius * 0.12, radius * 0.12);
-    const offsetY = (dx / length) * offsetAmount + rand(-radius * 0.12, radius * 0.12);
+    const spacing = pickRange(template.spacing, 12);
+    const stagger = count > 1 ? (index % 2 === 0 ? 1 : -1) * Math.ceil(index / 2) : 0;
+    const laneGap = Math.min(radius * 0.82 + spacing * 0.42, radius + 34);
+    const wiggle = Math.sin((state.bubbleCounter + index * 17.13) * 1.618) * Math.min(radius * 0.1, Math.max(1.5, spacing * 0.16));
+    const offsetAmount = stagger * laneGap + wiggle;
+    const offsetX = (-dy / length) * offsetAmount;
+    const offsetY = (dx / length) * offsetAmount;
     const pixelPoints = points.map((point) => ({
       x: clamp(point.x * state.width + offsetX, radius * 0.35, state.width - radius * 0.35),
       y: clamp(point.y * state.height + offsetY, radius * 0.35, state.height - radius * 0.35),
@@ -2201,6 +2400,23 @@
     return points[points.length - 1];
   }
 
+  function customTemplateRadius(template, index) {
+    const customSize = Array.isArray(template.sizes) ? Number(template.sizes[index]) : NaN;
+    return Number.isFinite(customSize) ? clamp(customSize, 14, 86) : pickRange(template.size, 38);
+  }
+
+  function customGroupDelay(template, index, speed) {
+    if (index <= 0) return 0;
+    const spacing = pickRange(template.spacing, 12);
+    let distance = 0;
+    for (let i = 1; i <= index; i += 1) {
+      const previous = customTemplateRadius(template, i - 1);
+      const current = customTemplateRadius(template, i);
+      distance += previous + current + spacing;
+    }
+    return distance / Math.max(12, speed);
+  }
+
   function advanceCustomPathBubble(bubble, dt) {
     const path = bubble.customPath;
     if (!path?.points?.length) return false;
@@ -2222,7 +2438,7 @@
   }
 
   function spawnCustomTemplateBubble(template, index, count) {
-    const radius = pickRange(template.size, 38);
+    const radius = customTemplateRadius(template, index);
     const speed = pickRange(template.speed, 68);
     const customPath = customPathForTemplate(template, radius, speed, index, count);
     const edge = customPath ? pathEdgeFromPoint(customPath.points[0]) : edgeForCustomTemplate(template);
@@ -2247,9 +2463,9 @@
       speed,
       ...(customPath ? {} : customTrajectoryOptions(template, index)),
       customPath,
-      delay: (index * pickRange(template.spacingMs, 90)) / 1000,
+      delay: customGroupDelay(template, index, speed),
       tapRequired: template.tapCount,
-      holdRequiredMs: template.holdMs,
+      holdRequiredMs: 0,
       customLabel: template.label,
       quietHint: index > 0,
     });
@@ -2667,6 +2883,7 @@
 
   function useClearSkill() {
     if (!state.running || state.clearSkillUses >= clearSkillMaxUses || state.clearSkillCharge < 1 || state.bubbles.length <= 0) return;
+    noteUsefulAction();
     state.clearSkillUses += 1;
     state.clearSkillCharge = 0;
     activateClearScreen({
@@ -2977,6 +3194,7 @@
   }
 
   function hitCatBubble(bubble, pointerId, hitX, hitY) {
+    noteUsefulAction();
     bubble.catHits = Math.min((bubble.catHits ?? 0) + 1, bubble.catTapRequired ?? catBubbleTapRequired);
     bubble.catHoldMs = Math.max(0, bubble.catHoldMs ?? 0);
     state.catHoldPointerId = pointerId ?? state.activePointerId;
@@ -3055,6 +3273,7 @@
   }
 
   function hitCustomBubble(bubble, pointerId, hitX, hitY) {
+    noteUsefulAction();
     const tapRequired = bubble.customTapRequired ?? 1;
     const holdRequired = bubble.customHoldRequiredMs ?? 0;
     if (holdRequired > 0) {
@@ -3170,10 +3389,11 @@
           ? whiteTone
           : bubble.isClear
       ? clearTone
-      : bubble.isSuper || bubble.colorIndex === -1
+        : bubble.isSuper || bubble.colorIndex === -1
         ? openTone
         : palette[bubble.colorIndex];
 
+    noteUsefulAction();
     if (bubble.isBleach) {
       hitBleachBubble(bubble, index, hitX, hitY);
       return;
@@ -3255,34 +3475,49 @@
   }
 
   function missBubble(bubble, index, isTap) {
-    const color = bubble.colorIndex >= 0 ? palette[bubble.colorIndex] : openTone;
+    noteWrongAction();
     penalizeStageMistake(bubble, "wrong");
     state.bubbles.splice(index, 1);
     resetCombo();
     state.ripples.push({
       x: bubble.x,
       y: bubble.y,
-      radius: bubble.radius * 0.36,
+      radius: bubble.radius * 0.32,
       age: 0,
-      life: 0.22,
-      color: colorWithAlpha(color.deep, 0.42),
-      power: 0.42,
+      life: 0.26,
+      color: colorWithAlpha("#20384f", 0.48),
+      power: 0.5,
     });
-    state.flash = Math.max(state.flash, 0.045);
+    state.ripples.push({
+      x: bubble.x,
+      y: bubble.y,
+      radius: bubble.radius * 0.12,
+      age: 0,
+      life: 0.18,
+      color: colorWithAlpha("#f4fbff", 0.42),
+      power: 0.28,
+    });
+    state.mistakeFlash = Math.max(state.mistakeFlash, 0.22);
+    makeFloatText(bubble.x, bubble.y - bubble.radius * 0.72, "偏了", "#eefbff", 0.72, {
+      life: 0.42,
+      vy: -18,
+      stroke: "rgba(15, 33, 43, 0.46)",
+      shadow: "rgba(15, 33, 43, 0.18)",
+    });
 
-    for (let i = 0; i < 6; i += 1) {
+    for (let i = 0; i < 5; i += 1) {
       makeParticle(
         bubble.x,
         bubble.y,
-        colorWithAlpha(color.deep, 0.5),
-        rand(38, 96),
+        i % 2 === 0 ? colorWithAlpha("#20384f", 0.5) : colorWithAlpha("#eefbff", 0.4),
+        rand(28, 78),
         rand(0, Math.PI * 2),
-        rand(0.16, 0.3),
+        rand(0.14, 0.24),
       );
     }
 
     if (isTap && navigator.vibrate) {
-      navigator.vibrate(6);
+      navigator.vibrate(8);
     }
   }
 
@@ -3576,8 +3811,10 @@
     if (tier > state.difficultyTier) {
       triggerDifficultyUp(tier);
     }
+    updateHiddenLeak(dt);
     drainWater(dt);
     state.flash = Math.max(0, state.flash - dt * 1.9);
+    state.mistakeFlash = Math.max(0, state.mistakeFlash - dt * 4.2);
     state.difficultyFlash = Math.max(0, state.difficultyFlash - dt * 0.9);
     state.comboPulse = Math.max(0, state.comboPulse - dt * 2.6);
     if (state.combo > 1) {
@@ -3822,6 +4059,42 @@
     ctx.strokeStyle = colorWithAlpha("#ffffff", 0.08 + levelAmount * 0.02);
     ctx.lineWidth = 0.65;
     ctx.stroke();
+    const cornerPower = levelThreeCornerPower();
+    if (cornerPower > 0) {
+      ctx.setLineDash([24, 28]);
+      ctx.lineDashOffset = -time * 0.018;
+      ctx.beginPath();
+      traceBackgroundBoundary(boundaryPoints);
+      ctx.strokeStyle = colorWithAlpha("#eafcff", 0.095 * cornerPower);
+      ctx.lineWidth = 4.4;
+      ctx.stroke();
+      ctx.setLineDash([10, 34]);
+      ctx.lineDashOffset = time * 0.012;
+      ctx.beginPath();
+      traceBackgroundBoundary(boundaryPoints);
+      ctx.strokeStyle = colorWithAlpha(boundaryTone, 0.055 * cornerPower);
+      ctx.lineWidth = 2.1;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    const tidePower = levelFiveTidePower();
+    if (tidePower > 0) {
+      ctx.setLineDash([18, 24]);
+      ctx.lineDashOffset = -time * 0.028;
+      ctx.beginPath();
+      traceBackgroundBoundary(boundaryPoints);
+      ctx.strokeStyle = colorWithAlpha("#eafcff", 0.13 * tidePower);
+      ctx.lineWidth = 5.2;
+      ctx.stroke();
+      ctx.setLineDash([8, 28]);
+      ctx.lineDashOffset = time * 0.018;
+      ctx.beginPath();
+      traceBackgroundBoundary(boundaryPoints);
+      ctx.strokeStyle = colorWithAlpha("#20384f", 0.06 * tidePower);
+      ctx.lineWidth = 2.4;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     ctx.restore();
   }
 
@@ -4500,11 +4773,123 @@
     ctx.restore();
   }
 
+  function drawWaterStressOverlay() {
+    const water = clamp(state.water, 0, 100);
+    const mood = smoothstep(86, 14, water);
+    const warn = smoothstep(52, 18, water);
+    const danger = smoothstep(24, 0, water);
+    const feedbackLive = state.running || water <= 0;
+    const shock = feedbackLive && state.elapsed < waterShockUntil ? clamp((waterShockUntil - state.elapsed) / 560, 0, 1) : 0;
+    const alert = feedbackLive && state.elapsed < waterCriticalUntil ? clamp((waterCriticalUntil - state.elapsed) / 980, 0, 1) : 0;
+    const strength = clamp(mood * 0.34 + warn * 0.46 + danger * 0.54 + shock * 0.32 + alert * 0.34, 0, 1);
+    if (strength <= 0.01) return;
+
+    const minSide = Math.min(state.width, state.height);
+    const maxSide = Math.max(state.width, state.height);
+    const pulse = 0.5 + Math.sin(state.visualTime / (danger > 0.28 ? 132 : 220)) * 0.5;
+    const alpha = clamp((0.025 + mood * 0.055 + warn * 0.075 + danger * 0.1) * (0.78 + pulse * 0.22) + shock * 0.08 + alert * 0.1, 0, 0.28);
+    const edge = Math.max(18, minSide * (0.055 + danger * 0.035 + shock * 0.025));
+
+    ctx.save();
+    const shadeAlpha = clamp((0.014 + mood * 0.092 + danger * 0.055 + shock * 0.035) * (0.94 + pulse * 0.06), 0, 0.18);
+    const shade = ctx.createLinearGradient(0, 0, 0, state.height);
+    shade.addColorStop(0, colorWithAlpha("#18364b", shadeAlpha * 0.76));
+    shade.addColorStop(0.38, colorWithAlpha("#25455b", shadeAlpha * 0.28));
+    shade.addColorStop(0.66, colorWithAlpha("#17364a", shadeAlpha * 0.34));
+    shade.addColorStop(1, colorWithAlpha("#0f2839", shadeAlpha * 0.82));
+    ctx.fillStyle = shade;
+    ctx.fillRect(0, 0, state.width, state.height);
+
+    const centerLift = ctx.createRadialGradient(
+      state.width * 0.5,
+      state.height * 0.42,
+      minSide * 0.1,
+      state.width * 0.5,
+      state.height * 0.46,
+      maxSide * 0.54,
+    );
+    centerLift.addColorStop(0, colorWithAlpha("#ffffff", clamp(0.012 + mood * 0.026, 0, 0.045)));
+    centerLift.addColorStop(0.72, "rgba(255, 255, 255, 0)");
+    centerLift.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = centerLift;
+    ctx.fillRect(0, 0, state.width, state.height);
+
+    const vignette = ctx.createRadialGradient(
+      state.width * 0.5,
+      state.height * 0.48,
+      minSide * 0.24,
+      state.width * 0.5,
+      state.height * 0.52,
+      maxSide * 0.74,
+    );
+    vignette.addColorStop(0, "rgba(255, 255, 255, 0)");
+    vignette.addColorStop(0.62, colorWithAlpha("#e5f6fb", alpha * 0.2));
+    vignette.addColorStop(1, colorWithAlpha("#243d55", alpha));
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, state.width, state.height);
+
+    const edgeAlpha = clamp(0.035 + warn * 0.045 + danger * 0.055 + shock * 0.06 + alert * 0.06, 0, 0.2);
+    const edgeColor = danger > 0.18 ? "#20384f" : "#dff6fb";
+    let gradient = ctx.createLinearGradient(0, 0, edge, 0);
+    gradient.addColorStop(0, colorWithAlpha(edgeColor, edgeAlpha));
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, edge, state.height);
+
+    gradient = ctx.createLinearGradient(state.width, 0, state.width - edge, 0);
+    gradient.addColorStop(0, colorWithAlpha(edgeColor, edgeAlpha));
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(state.width - edge, 0, edge, state.height);
+
+    gradient = ctx.createLinearGradient(0, 0, 0, edge);
+    gradient.addColorStop(0, colorWithAlpha(edgeColor, edgeAlpha * 0.78));
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, state.width, edge);
+
+    gradient = ctx.createLinearGradient(0, state.height, 0, state.height - edge);
+    gradient.addColorStop(0, colorWithAlpha(edgeColor, edgeAlpha * 0.9));
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, state.height - edge, state.width, edge);
+
+    if (water <= 8 || alert > 0.35) {
+      ctx.globalAlpha = clamp((danger * 0.06 + alert * 0.08) * (0.65 + pulse * 0.35), 0, 0.14);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, state.width, state.height);
+    }
+    ctx.restore();
+  }
+
   function drawFlash() {
     if (state.flash <= 0) return;
     ctx.save();
     ctx.globalAlpha = state.flash * 0.18;
     ctx.fillStyle = state.openUntil > state.elapsed ? openTone.light : "#ffffff";
+    ctx.fillRect(0, 0, state.width, state.height);
+    ctx.restore();
+  }
+
+  function drawMistakeFlash() {
+    if (state.mistakeFlash <= 0) return;
+    const alpha = state.mistakeFlash * 0.16;
+    ctx.save();
+    const edge = Math.max(18, Math.min(state.width, state.height) * 0.075);
+    let gradient = ctx.createLinearGradient(0, 0, edge, 0);
+    gradient.addColorStop(0, colorWithAlpha("#20384f", alpha));
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, edge, state.height);
+
+    gradient = ctx.createLinearGradient(state.width, 0, state.width - edge, 0);
+    gradient.addColorStop(0, colorWithAlpha("#20384f", alpha));
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(state.width - edge, 0, edge, state.height);
+
+    ctx.globalAlpha = state.mistakeFlash * 0.035;
+    ctx.fillStyle = "#eefbff";
     ctx.fillRect(0, 0, state.width, state.height);
     ctx.restore();
   }
@@ -4556,7 +4941,7 @@
 
   function draw() {
     drawBackground();
-    drawWaterSurface();
+    drawWaterStressOverlay();
     state.bubbles.forEach(drawBubble);
     drawRipples();
     drawBlasts();
@@ -4564,6 +4949,7 @@
     drawFloaters();
     drawDifficultyBurst();
     drawBuildVersion();
+    drawMistakeFlash();
     drawFlash();
   }
 
@@ -4859,8 +5245,19 @@
     state.comboRecoveryUntil = 0;
     state.comboRecoveryPower = 0;
     state.elapsed = Math.max(0, (targetLevel - 1) * stageDurationMs);
-    state.water = 76;
+    state.water = 75;
     state.waterPressure = 0;
+    state.hiddenLeak = 0;
+    state.hiddenLeakActive = false;
+    state.wrongStreak = 0;
+    state.lastUsefulActionAt = state.elapsed;
+    lastHudWater = null;
+    waterGainUntil = 0;
+    waterDrainUntil = 0;
+    waterShockUntil = 0;
+    waterCriticalUntil = 0;
+    lastWaterBand = "safe";
+    waterLowVibrationArmed = true;
     state.difficultyTier = Math.max(0, targetLevel - 1);
     state.nextPowerAt = state.elapsed + 26000;
     state.nextSpawnAt = state.elapsed + 120;

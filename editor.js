@@ -44,6 +44,7 @@
         levelMin: 1,
         levelMax: 99,
         count: [1, 1],
+        spacing: [8, 18],
         spacingMs: [90, 130],
         size: [42, 58],
         speed: [38, 64],
@@ -77,6 +78,7 @@
         levelMin: 2,
         levelMax: 99,
         count: [2, 3],
+        spacing: [8, 18],
         spacingMs: [80, 150],
         size: [24, 32],
         speed: [76, 116],
@@ -95,16 +97,17 @@
       },
       {
         id: "hold-line",
-        label: "按住泡",
+        label: "固定路径泡",
         weight: 0.5,
         levelMin: 4,
         levelMax: 99,
         count: [1, 1],
+        spacing: [8, 18],
         spacingMs: [70, 120],
         size: [36, 48],
         speed: [36, 58],
-        tapCount: 0,
-        holdMs: 680,
+        tapCount: 1,
+        holdMs: 0,
         edge: "left",
         lane: [0.26, 0.72],
         aimX: [0.62, 0.88],
@@ -134,6 +137,7 @@
         levelMin: 3,
         levelMax: 99,
         count: [3, 4],
+        spacing: [8, 18],
         spacingMs: [70, 110],
         size: [22, 34],
         speed: [64, 98],
@@ -177,6 +181,16 @@
     return [Math.min(a, b), Math.max(a, b)];
   }
 
+  function normalizeSizes(value, count, fallback) {
+    const source = Array.isArray(value) ? value : [];
+    const base = Math.round(mid(fallback));
+    const sizes = [];
+    for (let index = 0; index < count; index += 1) {
+      sizes.push(clamp(Math.round(number(source[index], base)), 14, 86));
+    }
+    return sizes;
+  }
+
   function simplifyPath(points, maxPoints = 72) {
     const clean = points
       .map((point) => ({ x: clamp(number(point?.x, 0), 0, 1), y: clamp(number(point?.y, 0), 0, 1) }))
@@ -211,12 +225,13 @@
       weight: clamp(number(template.weight, 1), 0.05, 20),
       levelMin: clamp(Math.round(number(template.levelMin, 1)), 1, 99),
       levelMax: clamp(Math.round(number(template.levelMax, 99)), 1, 99),
-      count: normalizeRange(template.count, [1, 1], 1, 8),
+      count: normalizeRange(template.count, [1, 1], 1, 12),
+      spacing: normalizeRange(template.spacing ?? template.spacingPx, [8, 18], 0, 80),
       spacingMs: normalizeRange(template.spacingMs, [70, 130], 0, 1400),
       size: normalizeRange(template.size, [30, 44], 14, 86),
       speed: normalizeRange(template.speed, [48, 82], 8, 260),
       tapCount: clamp(Math.round(number(template.tapCount, 1)), 0, 9),
-      holdMs: clamp(Math.round(number(template.holdMs, 0)), 0, 5000),
+      holdMs: 0,
       edge: edgeCycle.includes(template.edge) ? template.edge : template.edge === "random" ? "random" : "random",
       lane: normalizeRange(template.lane, [0.22, 0.78], 0.08, 0.92),
       aimX: normalizeRange(template.aimX, [0.3, 0.7], 0.05, 0.95),
@@ -229,6 +244,7 @@
       arcBend: normalizeRange(template.arcBend, [0, 0], -110, 110),
       arcLife: normalizeRange(template.arcLife, [2.1, 3.2], 0.5, 8),
       colorMode: ["auto", "random", "background", "left", "right"].includes(template.colorMode) ? template.colorMode : "auto",
+      sizes: normalizeSizes(template.sizes, Math.round(mid(normalizeRange(template.count, [1, 1], 1, 12))), normalizeRange(template.size, [30, 44], 14, 86)),
       path: normalizePath(template.path),
     };
   }
@@ -244,7 +260,7 @@
         minLevel: clamp(Math.round(number(raw.spawn?.minLevel, 1)), 1, 99),
         chance: clamp(number(raw.spawn?.chance, 0.72), 0, 1),
         intervalMs: normalizeRange(raw.spawn?.intervalMs, [520, 920], 160, 2400),
-        maxActive: clamp(Math.round(number(raw.spawn?.maxActive, 10)), 1, 10),
+        maxActive: clamp(Math.round(number(raw.spawn?.maxActive, 10)), 1, 12),
       },
       bubbles: bubbles.length ? bubbles : defaultPack.bubbles.map(normalizeTemplate),
     };
@@ -294,7 +310,7 @@
     pack.spawn.minLevel = clamp(Math.round(number(packControls.minLevel.value, 1)), 1, 99);
     pack.spawn.chance = clamp(number(packControls.chance.value, 0.72), 0, 1);
     pack.spawn.intervalMs = normalizeRange([packControls.intervalMin.value, packControls.intervalMax.value], [520, 920], 160, 2400);
-    pack.spawn.maxActive = clamp(Math.round(number(packControls.maxActive.value, 10)), 1, 10);
+    pack.spawn.maxActive = clamp(Math.round(number(packControls.maxActive.value, 10)), 1, 12);
     syncPackControls();
     refresh();
   }
@@ -306,7 +322,43 @@
       const value = valueAtPath(template, input.dataset.template);
       input.value = value ?? "";
     });
+    renderBubbleSizeList(template);
     syncQuickSliders();
+  }
+
+  function renderBubbleSizeList(template) {
+    const list = $("#bubbleSizeList");
+    if (!list) return;
+    const count = clamp(Math.round(mid(template.count)), 1, 12);
+    const sizes = normalizeSizes(template.sizes, count, template.size);
+    list.replaceChildren(
+      ...sizes.map((size, index) => {
+        const label = document.createElement("label");
+        label.className = "bubble-size-row";
+        const span = document.createElement("span");
+        span.textContent = `#${index + 1}`;
+        const input = document.createElement("input");
+        input.type = "number";
+        input.min = "14";
+        input.max = "86";
+        input.step = "1";
+        input.value = size;
+        input.addEventListener("input", () => {
+          const current = selectedTemplate();
+          if (!current) return;
+          const nextCount = clamp(Math.round(mid(current.count)), 1, 12);
+          const nextSizes = normalizeSizes(current.sizes, nextCount, current.size);
+          nextSizes[index] = clamp(Math.round(number(input.value, size)), 14, 86);
+          current.sizes = nextSizes;
+          const templateIndex = pack.bubbles.indexOf(current);
+          pack.bubbles[templateIndex] = normalizeTemplate(current, templateIndex);
+          selectedId = pack.bubbles[templateIndex].id;
+          refresh();
+        });
+        label.append(span, input);
+        return label;
+      }),
+    );
   }
 
   function spreadRange(value, ratio, min, max, integer = false) {
@@ -323,7 +375,7 @@
       speed: Math.round(mid(template.speed)),
       count: Math.round(mid(template.count)),
       tapCount: template.tapCount,
-      holdMs: template.holdMs,
+      spacing: Math.round(mid(template.spacing)),
       amplitude: Math.round(mid(template.amplitude)),
       pathCurve: Math.round((template.path?.curve ?? 0.68) * 100),
       weight: template.weight,
@@ -334,7 +386,7 @@
     sliderOutputs.forEach((output) => {
       const key = output.dataset.sliderValue;
       const value = sliderValues[key];
-      output.value = key === "weight" ? Number(value).toFixed(2) : key === "holdMs" ? `${value}ms` : key === "pathCurve" ? `${value}%` : String(value);
+      output.value = key === "weight" ? Number(value).toFixed(2) : key === "pathCurve" ? `${value}%` : String(value);
       output.textContent = output.value;
     });
   }
@@ -348,7 +400,7 @@
     if (key === "speed") template.speed = spreadRange(value, 0.18, 8, 260);
     if (key === "count") template.count = [Math.round(value), Math.round(value)];
     if (key === "tapCount") template.tapCount = Math.round(value);
-    if (key === "holdMs") template.holdMs = Math.round(value);
+    if (key === "spacing") template.spacing = spreadRange(value, 0.22, 0, 80);
     if (key === "amplitude") template.amplitude = spreadRange(value, 0.24, 0, 64);
     if (key === "pathCurve") template.path = normalizePath({ ...(template.path || {}), curve: value / 100 });
     if (key === "weight") template.weight = Number(value.toFixed(2));
@@ -587,6 +639,7 @@
         levelMin: 1,
         levelMax: 99,
         count: [1, 2],
+        spacing: [8, 18],
         spacingMs: [80, 130],
         size: [28, 42],
         speed: [52, 86],
@@ -874,7 +927,7 @@
     ctx.ellipse(point.x - radius * 0.32, point.y - radius * 0.38, radius * 0.2, radius * 0.08, -0.5, 0, Math.PI * 2);
     ctx.fill();
 
-    if (template.tapCount > 1 || template.tapCount === 0 || template.holdMs > 0) {
+    if (template.tapCount > 1 || template.tapCount === 0) {
       ctx.strokeStyle = "rgba(255,255,255,0.72)";
       ctx.lineWidth = Math.max(2, radius * 0.08);
       ctx.beginPath();
@@ -886,7 +939,7 @@
       ctx.font = `900 ${Math.max(10, radius * 0.36)}px "Arial Rounded MT Bold", sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      const text = template.tapCount > 1 ? String(template.tapCount) : template.tapCount === 0 ? "H" : `${Math.round(template.holdMs / 100) / 10}s`;
+      const text = template.tapCount > 1 ? String(template.tapCount) : "0";
       ctx.strokeText(text, point.x, point.y);
       ctx.fillText(text, point.x, point.y);
     }
@@ -927,12 +980,12 @@
   }
 
   function drawTemplatePreview(template, templateIndex, selected, now, width, height) {
-    const count = Math.min(4, Math.max(1, Math.round(mid(template.count))));
-    const radius = mid(template.size) * (selected ? 1 : 0.8);
+    const count = Math.min(12, Math.max(1, Math.round(mid(template.count))));
     const color = template.colorMode === "right" ? colors.pink : template.colorMode === "left" ? colors.blue : templateIndex % 2 ? colors.pink : colors.blue;
     ctx.save();
     ctx.globalAlpha = selected ? 1 : 0.28;
     for (let index = 0; index < count; index += 1) {
+      const radius = (template.sizes?.[index] ?? mid(template.size)) * (selected ? 1 : 0.8);
       const customPath = pixelPathForTemplate(template, index, count, radius, width, height);
       const start = customPath ? customPath[0] : previewStart(template, index, count, radius, width, height);
       const target = customPath ? customPath[customPath.length - 1] : previewTarget(template, width, height);
@@ -954,7 +1007,8 @@
       ctx.stroke();
 
       const speed = mid(template.speed);
-      const t = (now / clamp(4200 - speed * 12, 1500, 4200) + index * 0.18 + templateIndex * 0.07) % 1;
+      const spacing = mid(template.spacing ?? [8, 18]);
+      const t = (now / clamp(4200 - speed * 12, 1500, 4200) + index * clamp((radius * 2 + spacing) / 520, 0.08, 0.24) + templateIndex * 0.07) % 1;
       const point = customPath ? pointOnPolyline(customPath, t) : pointOnPath(template, start, target, t);
       drawBubble(point, radius, color, template);
     }
