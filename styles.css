@@ -670,6 +670,44 @@ body {
   transform: translateY(1px) scale(0.99);
 }
 
+.dev-pack-panel {
+  position: fixed;
+  z-index: 20;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(520px, calc(100vw - 24px));
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(24, 45, 58, 0.42);
+  box-shadow: 0 8px 26px rgba(31, 45, 58, 0.18);
+  backdrop-filter: blur(14px);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.dev-pack-status {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dev-pack-panel button {
+  min-width: 42px;
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 7px;
+  color: #173443;
+  background: rgba(255, 255, 255, 0.8);
+  font: inherit;
+  cursor: pointer;
+}
+
 .end-stats {
   min-width: min(76vw, 300px);
   min-height: 22px;
