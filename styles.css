@@ -529,7 +529,10 @@ body {
   transform: translateY(-2px) scale(1.28);
 }
 
+.water-block.warn,
 .water-block.low,
+.water-block.danger,
+.water-block.critical,
 .water-block.pulse,
 .water-block.open {
   opacity: 0.96;
@@ -571,6 +574,20 @@ body {
   animation: percent-bounce 360ms cubic-bezier(0.16, 1.28, 0.32, 1);
 }
 
+.water-block.drain .water-meter {
+  animation: water-drain-nudge 380ms ease-out;
+}
+
+.water-block.shock .water-meter {
+  animation: water-drain-shock 460ms cubic-bezier(0.14, 1.25, 0.24, 1);
+}
+
+.water-block.drain .water-value,
+.water-block.shock .water-value {
+  color: #eefbff;
+  animation: water-number-dip 380ms ease-out;
+}
+
 .water-block.gain .water-meter span::after {
   opacity: 1;
   animation:
@@ -587,14 +604,52 @@ body {
   animation-duration: 2.1s;
 }
 
+.water-block.warn .water-meter {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.3),
+    0 0 8px rgba(223, 246, 251, 0.16);
+}
+
 .water-block.low .water-value {
-  color: #f1d4dc;
+  color: #eefbff;
 }
 
 .water-block.low .water-meter {
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.28),
-    0 0 9px rgba(217, 162, 178, 0.2);
+    0 0 9px rgba(34, 61, 86, 0.22);
+}
+
+.water-block.danger .water-value {
+  color: #fff1c7;
+  animation: water-danger-pulse 820ms ease-in-out infinite;
+}
+
+.water-block.danger .water-meter {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.34),
+    0 0 11px rgba(34, 61, 86, 0.3);
+}
+
+.water-block.critical .water-value {
+  color: #fff8df;
+  animation: water-critical-pulse 560ms ease-in-out infinite;
+}
+
+.water-block.critical .water-meter {
+  animation: water-critical-meter 720ms ease-in-out infinite;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.42),
+    0 0 14px rgba(34, 61, 86, 0.4);
+}
+
+.water-block.critical.shock .water-meter,
+.water-block.danger.shock .water-meter {
+  animation: water-drain-shock 460ms cubic-bezier(0.14, 1.25, 0.24, 1);
+}
+
+.water-block.critical-flash .water-meter::after {
+  opacity: 1;
 }
 
 .curtain {
@@ -973,6 +1028,85 @@ body {
 
   100% {
     transform: scaleX(1) scaleY(1);
+  }
+}
+
+@keyframes water-drain-nudge {
+  0% {
+    transform: translateY(0) scaleX(1);
+  }
+
+  42% {
+    transform: translateY(1px) scaleX(0.985);
+  }
+
+  100% {
+    transform: translateY(0) scaleX(1);
+  }
+}
+
+@keyframes water-drain-shock {
+  0% {
+    transform: translate3d(0, 0, 0) scaleX(1);
+  }
+
+  24% {
+    transform: translate3d(-3px, 1px, 0) scaleX(0.965);
+  }
+
+  52% {
+    transform: translate3d(2px, -1px, 0) scaleX(1.018);
+  }
+
+  100% {
+    transform: translate3d(0, 0, 0) scaleX(1);
+  }
+}
+
+@keyframes water-number-dip {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+
+  44% {
+    transform: translateY(2px) scale(0.96, 1.08);
+  }
+
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes water-danger-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.055);
+  }
+}
+
+@keyframes water-critical-pulse {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+
+  50% {
+    transform: translateY(-1px) scale(1.1);
+  }
+}
+
+@keyframes water-critical-meter {
+  0%,
+  100% {
+    transform: scaleX(1) translateY(0);
+  }
+
+  50% {
+    transform: scaleX(1.025) translateY(-1px);
   }
 }
 
