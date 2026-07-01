@@ -200,18 +200,20 @@ body {
 
 .fps-counter {
   position: absolute;
-  right: calc(8px + var(--safe-right));
+  left: calc(4px + var(--safe-left));
   bottom: calc(8px + var(--safe-bottom));
   z-index: 5;
   padding: 1px 6px;
-  border-radius: 999px;
+  max-width: min(92vw, 460px);
+  border-radius: 6px;
   color: rgba(255, 255, 255, 0.78);
   background: rgba(12, 38, 58, 0.2);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 900;
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
+  white-space: normal;
   -webkit-text-stroke: 0.65px rgba(15, 33, 43, 0.58);
   paint-order: stroke fill;
   pointer-events: none;

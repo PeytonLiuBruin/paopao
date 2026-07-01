@@ -2,8 +2,8 @@
   "use strict";
 
   const canvas = document.getElementById("game");
-  const ctx = canvas.getContext("2d", { alpha: false });
-  const buildVersion = "1.1.1";
+  const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+  const buildVersion = "1.1.10";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -23,7 +23,6 @@
   const debugJumpButton = document.getElementById("debugJump");
   const debugStageInfo = document.getElementById("debugStageInfo");
   const bubbleAtlas = new Image();
-  bubbleAtlas.src = "./assets/bubble-atlas.png";
   const bombBubbleImage = new Image();
   bombBubbleImage.src = "./assets/bomb-bubble.png";
   const bleachBubbleImage = new Image();
@@ -32,7 +31,7 @@
   catBubbleImage.src = "./assets/cat-bubble.png";
   const bubbleSpriteCell = 192;
   const bubbleSpriteCols = 5;
-  const targetFrameMs = 1000 / 30;
+  const targetFrameMs = 1000 / 60;
   const maxActiveBubbles = 12;
   const maxParticles = 72;
   const maxRipples = 32;
@@ -40,6 +39,88 @@
   const maxFloaters = 10;
   const maxHints = 10;
   const debugUpdateMs = 500;
+  const performanceProfiles = [
+    {
+      name: "high",
+      dprCap: 1,
+      maxCanvasPixels: 520000,
+      backgroundScale: 0.9,
+      backgroundFps: 60,
+      backgroundFrameSkip: 1,
+      targetFps: 60,
+      contours: true,
+      particles: maxParticles,
+      ripples: maxRipples,
+      blasts: maxBlasts,
+      floaters: maxFloaters,
+      hints: maxHints,
+      effectChance: 0.86,
+      bubbleDetail: 0.82,
+      textureOverlay: false,
+      fullScreenOverlays: true,
+      smoothingQuality: "high",
+    },
+    {
+      name: "balanced",
+      dprCap: 1,
+      maxCanvasPixels: 440000,
+      backgroundScale: 0.78,
+      backgroundFps: 60,
+      backgroundFrameSkip: 1,
+      targetFps: 60,
+      contours: true,
+      particles: 48,
+      ripples: 22,
+      blasts: maxBlasts,
+      floaters: 8,
+      hints: 7,
+      effectChance: 0.72,
+      bubbleDetail: 0.72,
+      textureOverlay: false,
+      fullScreenOverlays: true,
+      smoothingQuality: "medium",
+    },
+    {
+      name: "saver",
+      dprCap: 1,
+      maxCanvasPixels: 360000,
+      backgroundScale: 0.66,
+      backgroundFps: 60,
+      backgroundFrameSkip: 1,
+      targetFps: 60,
+      contours: true,
+      particles: 28,
+      ripples: 14,
+      blasts: 3,
+      floaters: 6,
+      hints: 5,
+      effectChance: 0.58,
+      bubbleDetail: 0.68,
+      textureOverlay: false,
+      fullScreenOverlays: false,
+      smoothingQuality: "low",
+    },
+    {
+      name: "cool",
+      dprCap: 1,
+      maxCanvasPixels: 300000,
+      backgroundScale: 0.5,
+      backgroundFps: 60,
+      backgroundFrameSkip: 1,
+      targetFps: 60,
+      contours: false,
+      particles: 14,
+      ripples: 8,
+      blasts: 2,
+      floaters: 4,
+      hints: 3,
+      effectChance: 0.34,
+      bubbleDetail: 0.52,
+      textureOverlay: false,
+      fullScreenOverlays: false,
+      smoothingQuality: "low",
+    },
+  ];
   const waterBudgetRounds = [
     { count: 10, total: 300 },
     { count: 18, total: 250 },
@@ -200,35 +281,40 @@
   let waterCriticalUntil = 0;
   let lastWaterBand = "safe";
   let waterLowVibrationArmed = true;
-  const mirrorBackgroundCanvas = document.createElement("canvas");
-  const mirrorBackgroundCtx = mirrorBackgroundCanvas.getContext("2d", { alpha: false, willReadFrequently: true });
-  let mirrorBackgroundData = null;
-  let mirrorBackgroundValues = new Float32Array(1);
-  let mirrorLowWidth = 1;
-  let mirrorLowHeight = 1;
-  let mirrorNxByX = new Float32Array(1);
-  let mirrorNyByY = new Float32Array(1);
-  let mirrorRowBlueR = new Float32Array(1);
-  let mirrorRowBlueG = new Float32Array(1);
-  let mirrorRowBlueB = new Float32Array(1);
-  let mirrorColPinkR = new Float32Array(1);
-  let mirrorColPinkG = new Float32Array(1);
-  let mirrorColPinkB = new Float32Array(1);
-  let mirrorLightY = new Float32Array(1);
-  let mirrorLightX = new Float32Array(1);
-  let mirrorContourSegments = [];
+  let performanceTier = initialPerformanceTier();
+  let initialTier = performanceTier;
+  let performanceWorkMs = targetFrameMs * 0.35;
+  let performanceSlowSince = 0;
+  let performanceCoolSince = 0;
+  let performanceLastChangeAt = 0;
+  let performanceLastResizeDpr = 1;
+  const frameStatSize = 600;
+  const frameIntervals = new Float32Array(frameStatSize);
+  const frameWorkTimes = new Float32Array(frameStatSize);
+  let frameStatIndex = 0;
+  let frameStatCount = 0;
+  let frameJankCount = 0;
+  let frameWorstMs = 0;
 
   function resize() {
     const rect = canvas.getBoundingClientRect();
+    const profile = currentPerformanceProfile();
     state.width = Math.max(1, rect.width);
     state.height = Math.max(1, rect.height);
-    state.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    state.dpr = desiredCanvasDpr();
+    performanceLastResizeDpr = state.dpr;
     canvas.width = Math.floor(state.width * state.dpr);
     canvas.height = Math.floor(state.height * state.dpr);
     ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
     ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
+    ctx.imageSmoothingQuality = profile.smoothingQuality;
     if (window.PaopaoBackgroundEngine) {
+      window.PaopaoBackgroundEngine.setQuality?.({
+        scale: profile.backgroundScale,
+        fps: profile.backgroundFps,
+        frameSkip: profile.backgroundFrameSkip,
+        contours: profile.contours,
+      });
       window.PaopaoBackgroundEngine.resize(state.width, state.height);
     }
   }
@@ -425,6 +511,126 @@
     return t * t * (3 - 2 * t);
   }
 
+  function isLikelyMobileDevice() {
+    try {
+      return window.matchMedia?.("(pointer: coarse)").matches || Math.min(window.innerWidth, window.innerHeight) <= 760;
+    } catch {
+      return Math.min(window.innerWidth || 0, window.innerHeight || 0) <= 760;
+    }
+  }
+
+  function initialPerformanceTier() {
+    const cores = navigator.hardwareConcurrency || 4;
+    const memory = navigator.deviceMemory || 4;
+    const dpr = window.devicePixelRatio || 1;
+    const mobile = isLikelyMobileDevice();
+    if (cores <= 2 || memory <= 2) return 2;
+    if (mobile && (cores <= 4 || memory <= 3 || dpr >= 2.5)) return 1;
+    return 0;
+  }
+
+  function currentPerformanceProfile() {
+    return performanceProfiles[clamp(Math.round(performanceTier), 0, performanceProfiles.length - 1)] ?? performanceProfiles[0];
+  }
+
+  function desiredCanvasDpr() {
+    const rawDpr = window.devicePixelRatio || 1;
+    const profile = currentPerformanceProfile();
+    const area = Math.max(1, state.width * state.height);
+    const areaCap = Math.sqrt((profile.maxCanvasPixels || 900000) / area);
+    return Math.max(1, Math.min(rawDpr, profile.dprCap, areaCap));
+  }
+
+  function currentTargetFrameMs() {
+    return 1000 / clamp(currentPerformanceProfile().targetFps || 60, 30, 60);
+  }
+
+  function thermalTierFloor() {
+    if (!state.running || !isLikelyMobileDevice()) return initialTier;
+    const minutes = state.elapsed / 60000;
+    if (minutes >= 42) return Math.max(initialTier, 2);
+    if (minutes >= 18) return Math.max(initialTier, 1);
+    return initialTier;
+  }
+
+  function applyPerformanceProfile() {
+    const profile = currentPerformanceProfile();
+    if (window.PaopaoBackgroundEngine) {
+      window.PaopaoBackgroundEngine.setQuality?.({
+        scale: profile.backgroundScale,
+        fps: profile.backgroundFps,
+        frameSkip: profile.backgroundFrameSkip,
+        contours: profile.contours,
+      });
+    }
+    const nextDpr = desiredCanvasDpr();
+    if (state.width > 0 && Math.abs(nextDpr - performanceLastResizeDpr) > 0.04) {
+      resize();
+    }
+    trimRuntimeEffects();
+  }
+
+  function setPerformanceTier(nextTier, now = performance.now()) {
+    const clamped = clamp(Math.round(nextTier), 0, performanceProfiles.length - 1);
+    if (clamped === performanceTier) return;
+    performanceTier = clamped;
+    performanceLastChangeAt = now;
+    performanceSlowSince = 0;
+    performanceCoolSince = 0;
+    applyPerformanceProfile();
+  }
+
+  function effectLimit(name) {
+    const value = currentPerformanceProfile()[name];
+    if (Number.isFinite(value)) return Math.max(0, Math.floor(value));
+    if (name === "ripples") return maxRipples;
+    if (name === "blasts") return maxBlasts;
+    if (name === "floaters") return maxFloaters;
+    if (name === "hints") return maxHints;
+    return maxParticles;
+  }
+
+  function allowDecorativeEffect(priority = 1) {
+    const chance = currentPerformanceProfile().effectChance;
+    return chance >= 1 || Math.random() < clamp(chance * priority, 0, 1);
+  }
+
+  function updateAdaptivePerformance(now, frameElapsedMs, workMs) {
+    performanceWorkMs = performanceWorkMs * 0.88 + workMs * 0.12;
+    const floor = thermalTierFloor();
+    if (performanceTier < floor && now - performanceLastChangeAt > 3500) {
+      setPerformanceTier(floor, now);
+      return;
+    }
+
+    const frameBudget = currentTargetFrameMs();
+    const targetFps = currentPerformanceProfile().targetFps || 60;
+    const slowFrame = frameElapsedMs > frameBudget * 1.7 || performanceWorkMs > frameBudget * 0.72 || (perfFps > 0 && perfFps < targetFps * 0.78);
+    const coolFrame = performanceWorkMs < frameBudget * 0.4 && (!perfFps || perfFps >= targetFps * 0.94);
+
+    if (slowFrame) {
+      performanceSlowSince ||= now;
+      performanceCoolSince = 0;
+    } else if (coolFrame) {
+      performanceCoolSince ||= now;
+      performanceSlowSince = 0;
+    } else {
+      performanceSlowSince = 0;
+      performanceCoolSince = 0;
+    }
+
+    if (performanceSlowSince && now - performanceSlowSince > 3600 && now - performanceLastChangeAt > 6200) {
+      setPerformanceTier(performanceTier + 1, now);
+    } else if (
+      performanceCoolSince &&
+      now - performanceCoolSince > 18000 &&
+      now - performanceLastChangeAt > 14000 &&
+      performanceTier > floor
+    ) {
+      setPerformanceTier(performanceTier - 1, now);
+    }
+  }
+
   function trimArray(list, maxLength) {
     if (list.length > maxLength) {
       list.splice(0, list.length - maxLength);
@@ -432,11 +638,55 @@
   }
 
   function trimRuntimeEffects() {
-    trimArray(state.particles, maxParticles);
-    trimArray(state.ripples, maxRipples);
-    trimArray(state.blasts, maxBlasts);
-    trimArray(state.floaters, maxFloaters);
-    trimArray(state.hints, maxHints);
+    trimArray(state.particles, effectLimit("particles"));
+    trimArray(state.ripples, effectLimit("ripples"));
+    trimArray(state.blasts, effectLimit("blasts"));
+    trimArray(state.floaters, effectLimit("floaters"));
+    trimArray(state.hints, effectLimit("hints"));
+  }
+
+  function resetFrameStats() {
+    frameStatIndex = 0;
+    frameStatCount = 0;
+    frameJankCount = 0;
+    frameWorstMs = 0;
+  }
+
+  function recordFrameStats(frameMs, workMs) {
+    if (!Number.isFinite(frameMs) || frameMs <= 0) return;
+    const target = currentTargetFrameMs();
+    frameIntervals[frameStatIndex] = frameMs;
+    frameWorkTimes[frameStatIndex] = Number.isFinite(workMs) ? workMs : 0;
+    frameStatIndex = (frameStatIndex + 1) % frameStatSize;
+    frameStatCount = Math.min(frameStatSize, frameStatCount + 1);
+    frameWorstMs = Math.max(frameWorstMs, frameMs);
+    if (frameMs > target * 1.55 || frameMs > 28) {
+      frameJankCount += 1;
+    }
+  }
+
+  function percentile(sorted, percent) {
+    if (!sorted.length) return 0;
+    const index = clamp(Math.ceil(sorted.length * percent) - 1, 0, sorted.length - 1);
+    return sorted[index];
+  }
+
+  function frameStatsSummary() {
+    if (!frameStatCount) {
+      return { p95: 0, p99: 0, avgWork: performanceWorkMs, jank: 0, worst: 0 };
+    }
+    const frames = Array.from(frameIntervals.slice(0, frameStatCount)).sort((a, b) => a - b);
+    let workTotal = 0;
+    for (let i = 0; i < frameStatCount; i += 1) {
+      workTotal += frameWorkTimes[i];
+    }
+    return {
+      p95: percentile(frames, 0.95),
+      p99: percentile(frames, 0.99),
+      avgWork: workTotal / frameStatCount,
+      jank: frameJankCount,
+      worst: frameWorstMs,
+    };
   }
 
   function clearRuntimeEffects() {
@@ -456,7 +706,14 @@
   function updatePerfDebug(now = performance.now(), force = false) {
     if (!perfDebug || (!force && now - perfLastUpdate < debugUpdateMs)) return;
     perfLastUpdate = now;
-    perfDebug.textContent = `FPS ${Math.round(perfFps || 0)}`;
+    const profile = currentPerformanceProfile();
+    const megapixels = ((canvas.width * canvas.height) / 1000000).toFixed(2);
+    const stats = frameStatsSummary();
+    perfDebug.textContent =
+      `FPS ${Math.round(perfFps || 0)}/${profile.targetFps} ${profile.name} ` +
+      `p95 ${stats.p95.toFixed(1)} p99 ${stats.p99.toFixed(1)} ` +
+      `j${stats.jank} max${stats.worst.toFixed(0)} ` +
+      `w${stats.avgWork.toFixed(1)} dpr${state.dpr.toFixed(2)} ${megapixels}MP`;
   }
 
   function scheduleLoop() {
@@ -1335,6 +1592,11 @@
     lastFrameTime = performance.now();
     perfFrames = 0;
     perfLastTime = lastFrameTime;
+    performanceWorkMs = currentTargetFrameMs() * 0.35;
+    performanceSlowSince = 0;
+    performanceCoolSince = 0;
+    resetFrameStats();
+    applyPerformanceProfile();
     draw();
     updatePerfDebug(lastFrameTime, true);
     scheduleLoop();
@@ -1895,7 +2157,7 @@
       alpha,
       age: 0,
     });
-    trimArray(state.hints, maxHints);
+    trimArray(state.hints, effectLimit("hints"));
   }
 
   function spawnBubbleStream(d) {
@@ -3041,8 +3303,10 @@
   }
 
   function makeParticle(x, y, color, speed, angle, life, sparkle = false) {
-    if (state.particles.length >= maxParticles) {
-      state.particles.splice(0, state.particles.length - maxParticles + 1);
+    const limit = effectLimit("particles");
+    if (limit <= 0 || !allowDecorativeEffect(sparkle ? 0.72 : 1)) return;
+    if (state.particles.length >= limit) {
+      state.particles.splice(0, state.particles.length - limit + 1);
     }
     state.particles.push({
       x,
@@ -3059,8 +3323,10 @@
   }
 
   function makeFloatText(x, y, text, color, scale = 1, options = {}) {
-    if (state.floaters.length >= maxFloaters) {
-      state.floaters.splice(0, state.floaters.length - maxFloaters + 1);
+    const limit = effectLimit("floaters");
+    if (limit <= 0) return;
+    if (state.floaters.length >= limit) {
+      state.floaters.splice(0, state.floaters.length - limit + 1);
     }
     state.floaters.push({
       x,
@@ -3095,6 +3361,7 @@
     const milestone = state.combo >= 5 && state.combo % 5 === 0;
     const mega = state.combo >= 10 && state.combo % 10 === 0;
     const strong = state.combo >= 8;
+    if (!milestone && !mega && !allowDecorativeEffect(0.55)) return;
     const power = mega ? 1.26 : milestone ? 0.98 : strong ? 0.72 : 0.5;
     state.ripples.push({
       x,
@@ -3105,7 +3372,7 @@
       color: color.light,
       power,
     });
-    if (strong) {
+    if (strong && allowDecorativeEffect(0.7)) {
       state.ripples.push({
         x,
         y,
@@ -4111,7 +4378,13 @@
 
   function drawBackground() {
     if (window.PaopaoBackgroundEngine) {
-      window.PaopaoBackgroundEngine.render(ctx, backgroundEngineTimeSeconds(), state.width, state.height);
+      const profile = currentPerformanceProfile();
+      window.PaopaoBackgroundEngine.render(ctx, backgroundEngineTimeSeconds(), state.width, state.height, {
+        scale: profile.backgroundScale,
+        fps: profile.backgroundFps,
+        frameSkip: profile.backgroundFrameSkip,
+        contours: profile.contours,
+      });
       return;
     }
     const time = state.visualTime;
@@ -4222,6 +4495,8 @@
   }
 
   function drawBubbleSpriteBody(bubble, color, x, y, r, alpha) {
+    const profile = currentPerformanceProfile();
+    const detail = profile.bubbleDetail;
     const spriteIndex = bubble.spriteIndex ?? 0;
     const variant = spriteIndex % bubbleSpriteCols;
     const aspect =
@@ -4232,14 +4507,14 @@
           : variant === 4
             ? { x: 0.96, y: 1.08 }
             : { x: 1, y: 1 };
-    const squash = Math.sin(bubble.age * 1.32 + bubble.skinPhase) * (bubble.isStream ? 0.038 : 0.06);
-    const pulse = Math.sin(bubble.age * 2.1 + bubble.skinPhase) * 0.018;
+    const squash = Math.sin(bubble.age * 1.32 + bubble.skinPhase) * (bubble.isStream ? 0.038 : 0.06) * detail;
+    const pulse = Math.sin(bubble.age * 2.1 + bubble.skinPhase) * 0.018 * detail;
     const driftRotation =
       bubble.skinRotation +
-      Math.sin(bubble.wobble * 0.54 + bubble.skinPhase) * 0.16 +
+      Math.sin(bubble.wobble * 0.54 + bubble.skinPhase) * 0.16 * detail +
       bubble.age * bubble.skinSpin * 0.07;
-    const points = bubble.isStream ? 10 : 14;
-    const wobbleAmount = bubble.isStream ? 0.04 : 0.068;
+    const points = bubble.isStream ? (detail < 0.65 ? 7 : detail < 0.9 ? 8 : 10) : detail < 0.65 ? 9 : detail < 0.9 ? 11 : 14;
+    const wobbleAmount = (bubble.isStream ? 0.04 : 0.068) * detail;
 
     const traceShape = (scale = 1) => {
       ctx.beginPath();
@@ -4274,7 +4549,7 @@
     ctx.scale(aspect.x * (1 + squash), aspect.y * (1 - squash * 0.48));
 
     ctx.shadowColor = colorWithAlpha(color.deep, 0.26);
-    ctx.shadowBlur = r * 0.44;
+    ctx.shadowBlur = r * (detail < 0.65 ? 0.2 : 0.44);
     traceShape(1.02);
     const body = ctx.createRadialGradient(-r * 0.34, -r * 0.42, r * 0.08, 0, 0, r * 1.12);
     body.addColorStop(0, "rgba(255, 255, 255, 0.94)");
@@ -4288,7 +4563,7 @@
     ctx.save();
     traceShape(1.03);
     ctx.clip();
-    if (bubbleAtlas.complete && bubbleAtlas.naturalWidth > 0) {
+    if (profile.textureOverlay && bubbleAtlas.complete && bubbleAtlas.naturalWidth > 0) {
       const sx = (spriteIndex % bubbleSpriteCols) * bubbleSpriteCell;
       const sy = Math.floor(spriteIndex / bubbleSpriteCols) * bubbleSpriteCell;
       const imageRadius = r * 1.55;
@@ -4306,15 +4581,17 @@
         imageRadius * 2,
       );
     }
-    const sheen = ctx.createLinearGradient(-r, -r, r, r);
-    sheen.addColorStop(0, "rgba(255,255,255,0.34)");
-    sheen.addColorStop(0.28, "rgba(255,255,255,0)");
-    sheen.addColorStop(0.72, "rgba(255,255,255,0.12)");
-    sheen.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.globalCompositeOperation = "screen";
-    ctx.globalAlpha *= 0.7;
-    ctx.fillStyle = sheen;
-    ctx.fillRect(-r * 1.4, -r * 1.4, r * 2.8, r * 2.8);
+    if (detail >= 0.65) {
+      const sheen = ctx.createLinearGradient(-r, -r, r, r);
+      sheen.addColorStop(0, "rgba(255,255,255,0.34)");
+      sheen.addColorStop(0.28, "rgba(255,255,255,0)");
+      sheen.addColorStop(0.72, "rgba(255,255,255,0.12)");
+      sheen.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.globalCompositeOperation = "screen";
+      ctx.globalAlpha *= 0.7;
+      ctx.fillStyle = sheen;
+      ctx.fillRect(-r * 1.4, -r * 1.4, r * 2.8, r * 2.8);
+    }
     ctx.restore();
 
     if (bubble.isWhite) {
@@ -4342,20 +4619,24 @@
     ctx.strokeStyle = colorWithAlpha(color.light, 0.68);
     ctx.lineWidth = Math.max(1.4, r * 0.062);
     ctx.stroke();
-    traceShape(0.92);
-    ctx.strokeStyle = "rgba(255,255,255,0.28)";
-    ctx.lineWidth = Math.max(1, r * 0.032);
-    ctx.stroke();
+    if (detail >= 0.78) {
+      traceShape(0.92);
+      ctx.strokeStyle = "rgba(255,255,255,0.28)";
+      ctx.lineWidth = Math.max(1, r * 0.032);
+      ctx.stroke();
+    }
 
     ctx.globalAlpha *= 0.72;
     ctx.beginPath();
     ctx.ellipse(-r * 0.35, -r * 0.38, r * 0.25, r * 0.08, -0.62, 0, Math.PI * 2);
     ctx.fillStyle = "#ffffff";
     ctx.fill();
-    ctx.beginPath();
-    ctx.arc(r * 0.36, r * 0.22, r * 0.14, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(255,255,255,0.28)";
-    ctx.fill();
+    if (detail >= 0.6) {
+      ctx.beginPath();
+      ctx.arc(r * 0.36, r * 0.22, r * 0.14, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255,0.28)";
+      ctx.fill();
+    }
     ctx.restore();
 
     return true;
@@ -4493,7 +4774,6 @@
             : bubble.isSuper || bubble.colorIndex === -1
               ? openTone
               : palette[bubble.colorIndex];
-    const ready = canPopBubble(bubble);
     const x = bubble.x;
     const y = bubble.y;
     const r = bubble.radius;
@@ -4543,16 +4823,6 @@
       ctx.stroke();
       ctx.restore();
       ctx.globalAlpha = whiteAlpha;
-    }
-
-    if (ready) {
-      ctx.shadowColor = colorWithAlpha(color.light, 0.72);
-      ctx.shadowBlur = r * 0.7;
-      ctx.beginPath();
-      ctx.arc(x, y, r + 6, 0, Math.PI * 2);
-      ctx.strokeStyle = colorWithAlpha(color.light, 0.34 + Math.sin(state.visualTime / 520) * 0.08);
-      ctx.lineWidth = Math.max(2, r * 0.055);
-      ctx.stroke();
     }
 
     if (openActive && !bubble.isSuper && !bubble.isClear && !bubble.isBleach && !bubble.isBomb && !bubble.isCat && !bubble.isWhite) {
@@ -4798,6 +5068,7 @@
     const alert = feedbackLive && state.elapsed < waterCriticalUntil ? clamp((waterCriticalUntil - state.elapsed) / 980, 0, 1) : 0;
     const strength = clamp(mood * 0.34 + warn * 0.46 + danger * 0.54 + shock * 0.32 + alert * 0.34, 0, 1);
     if (strength <= 0.01) return;
+    if (!currentPerformanceProfile().fullScreenOverlays && strength < 0.62) return;
 
     const minSide = Math.min(state.width, state.height);
     const maxSide = Math.max(state.width, state.height);
@@ -4975,21 +5246,25 @@
       return;
     }
 
-    if (lastFrameTime && now - lastFrameTime < targetFrameMs) {
+    if (lastFrameTime && now - lastFrameTime < currentTargetFrameMs() - 1) {
       scheduleLoop();
       return;
     }
 
-    const elapsed = lastFrameTime ? now - lastFrameTime : targetFrameMs;
-    const dt = Math.min(0.05, Math.max(0, elapsed / 1000 || targetFrameMs / 1000));
+    const targetStep = currentTargetFrameMs();
+    const elapsed = lastFrameTime ? now - lastFrameTime : targetStep;
+    const dt = Math.min(0.05, Math.max(0, elapsed / 1000 || targetStep / 1000));
     lastFrameTime = now;
     state.lastTime = now;
     state.visualTime += dt * 1000;
+    const workStart = performance.now();
     update(dt);
     trimRuntimeEffects();
     if (state.running) {
       draw();
     }
+    const workMs = performance.now() - workStart;
+    recordFrameStats(elapsed, workMs);
 
     perfFrames += 1;
     if (!perfLastTime) perfLastTime = now;
@@ -4998,6 +5273,7 @@
       perfFrames = 0;
       perfLastTime = now;
     }
+    updateAdaptivePerformance(now, elapsed, workMs);
     updatePerfDebug(now);
     scheduleLoop();
   }
@@ -5183,7 +5459,7 @@
     startTransition.append(ring);
 
     const spread = Math.max(state.width || window.innerWidth, state.height || window.innerHeight);
-    const count = Math.round(clamp(spread / 20, 28, 42));
+    const count = Math.round(clamp(spread / 20, 28, 42) * clamp(currentPerformanceProfile().effectChance, 0.48, 1));
     for (let i = 0; i < count; i += 1) {
       const bubble = document.createElement("span");
       const angle = (i / count) * Math.PI * 2 + rand(-0.2, 0.2);

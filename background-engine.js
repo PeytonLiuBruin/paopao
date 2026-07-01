@@ -4,7 +4,7 @@
   const LEVEL_SECONDS = 20;
   const TAU = Math.PI * 2;
   const fieldCanvas = document.createElement("canvas");
-  const fieldCtx = fieldCanvas.getContext("2d", { alpha: false, willReadFrequently: true });
+  const fieldCtx = fieldCanvas.getContext("2d", { alpha: false });
 
   const liquidPalette = {
     blue: [17, 158, 190],
@@ -40,6 +40,12 @@
   let colShimmerSin = new Float32Array(lowWidth);
   let colShimmerCos = new Float32Array(lowWidth);
   let renderedTime = Number.NaN;
+  let qualityScale = 1;
+  let frameStepSeconds = 1 / 60;
+  let contoursEnabled = true;
+  let contourSegments = new Float32Array(1024);
+  let contourSegmentCount = 0;
+  let contourRenderedTime = Number.NaN;
   const pixelColor = [0, 0, 0];
 
   const PATTERNS = {
@@ -335,8 +341,8 @@
   function resize(nextWidth, nextHeight) {
     width = Math.max(1, nextWidth || 1);
     height = Math.max(1, nextHeight || 1);
-    lowWidth = Math.round(clamp(width / 3.35, 128, 174));
-    lowHeight = Math.round(clamp(height / 3.35, 224, 310));
+    lowWidth = Math.round(clamp((width / 3.35) * qualityScale, 78, 174));
+    lowHeight = Math.round(clamp((height / 3.35) * qualityScale, 132, 310));
     fieldCanvas.width = lowWidth;
     fieldCanvas.height = lowHeight;
     imageData = fieldCtx.createImageData(lowWidth, lowHeight);
@@ -360,6 +366,8 @@
     for (let x = 0; x < lowWidth; x += 1) nxByX[x] = x / Math.max(1, lowWidth - 1);
     for (let y = 0; y < lowHeight; y += 1) nyByY[y] = y / Math.max(1, lowHeight - 1);
     renderedTime = Number.NaN;
+    contourSegmentCount = 0;
+    contourRenderedTime = Number.NaN;
   }
 
   function updateShadeCaches(t) {
@@ -436,10 +444,18 @@
     renderedTime = t;
   }
 
+  function quantizeTime(t) {
+    const safeTime = Number.isFinite(t) ? Math.max(0, t) : 0;
+    const step = Math.max(1 / 60, frameStepSeconds);
+    return Math.floor(safeTime / step) * step;
+  }
+
   function ensureFrame(t) {
-    if (!Number.isFinite(renderedTime) || Math.abs(renderedTime - t) > 0.001) {
-      updateFrame(t);
+    const frameTime = quantizeTime(t);
+    if (!Number.isFinite(renderedTime) || Math.abs(renderedTime - frameTime) > 0.001) {
+      updateFrame(frameTime);
     }
+    return renderedTime;
   }
 
   function valueAtGrid(x, y) {
@@ -461,49 +477,104 @@
     return mix(a, b, ty);
   }
 
-  function edgePoint(edge, x, y, v0, v1, v2, v3) {
-    const sx = width / lowWidth;
-    const sy = height / lowHeight;
-    if (edge === "top") {
-      const a = Math.abs(v0) / Math.max(0.0001, Math.abs(v0) + Math.abs(v1));
-      return { x: (x + a) * sx, y: y * sy };
+  function pushContourSegment(ax, ay, bx, by) {
+    const offset = contourSegmentCount * 4;
+    if (offset + 4 > contourSegments.length) {
+      const next = new Float32Array(contourSegments.length * 2);
+      next.set(contourSegments);
+      contourSegments = next;
     }
-    if (edge === "right") {
-      const a = Math.abs(v1) / Math.max(0.0001, Math.abs(v1) + Math.abs(v2));
-      return { x: (x + 1) * sx, y: (y + a) * sy };
-    }
-    if (edge === "bottom") {
-      const a = Math.abs(v3) / Math.max(0.0001, Math.abs(v3) + Math.abs(v2));
-      return { x: (x + a) * sx, y: (y + 1) * sy };
-    }
-    const a = Math.abs(v0) / Math.max(0.0001, Math.abs(v0) + Math.abs(v3));
-    return { x: x * sx, y: (y + a) * sy };
+    contourSegments[offset] = ax;
+    contourSegments[offset + 1] = ay;
+    contourSegments[offset + 2] = bx;
+    contourSegments[offset + 3] = by;
+    contourSegmentCount += 1;
   }
 
   function collectContourSegments() {
-    const segments = [];
+    contourSegmentCount = 0;
+    const sx = width / lowWidth;
+    const sy = height / lowHeight;
     for (let y = 0; y < lowHeight - 1; y += 1) {
       for (let x = 0; x < lowWidth - 1; x += 1) {
         const v0 = valueAtGrid(x, y);
         const v1 = valueAtGrid(x + 1, y);
         const v2 = valueAtGrid(x + 1, y + 1);
         const v3 = valueAtGrid(x, y + 1);
-        const points = [];
-        if ((v0 < 0) !== (v1 < 0)) points.push(edgePoint("top", x, y, v0, v1, v2, v3));
-        if ((v1 < 0) !== (v2 < 0)) points.push(edgePoint("right", x, y, v0, v1, v2, v3));
-        if ((v3 < 0) !== (v2 < 0)) points.push(edgePoint("bottom", x, y, v0, v1, v2, v3));
-        if ((v0 < 0) !== (v3 < 0)) points.push(edgePoint("left", x, y, v0, v1, v2, v3));
-        if (points.length === 2) {
-          segments.push([points[0], points[1]]);
-        } else if (points.length === 4) {
-          segments.push([points[0], points[1]], [points[2], points[3]]);
+        let px0 = 0;
+        let py0 = 0;
+        let px1 = 0;
+        let py1 = 0;
+        let px2 = 0;
+        let py2 = 0;
+        let px3 = 0;
+        let py3 = 0;
+        let pointCount = 0;
+        if ((v0 < 0) !== (v1 < 0)) {
+          const a = Math.abs(v0) / Math.max(0.0001, Math.abs(v0) + Math.abs(v1));
+          px0 = (x + a) * sx;
+          py0 = y * sy;
+          pointCount = 1;
+        }
+        if ((v1 < 0) !== (v2 < 0)) {
+          const a = Math.abs(v1) / Math.max(0.0001, Math.abs(v1) + Math.abs(v2));
+          if (pointCount === 0) {
+            px0 = (x + 1) * sx;
+            py0 = (y + a) * sy;
+          } else if (pointCount === 1) {
+            px1 = (x + 1) * sx;
+            py1 = (y + a) * sy;
+          } else {
+            px2 = (x + 1) * sx;
+            py2 = (y + a) * sy;
+          }
+          pointCount += 1;
+        }
+        if ((v3 < 0) !== (v2 < 0)) {
+          const a = Math.abs(v3) / Math.max(0.0001, Math.abs(v3) + Math.abs(v2));
+          if (pointCount === 0) {
+            px0 = (x + a) * sx;
+            py0 = (y + 1) * sy;
+          } else if (pointCount === 1) {
+            px1 = (x + a) * sx;
+            py1 = (y + 1) * sy;
+          } else if (pointCount === 2) {
+            px2 = (x + a) * sx;
+            py2 = (y + 1) * sy;
+          } else {
+            px3 = (x + a) * sx;
+            py3 = (y + 1) * sy;
+          }
+          pointCount += 1;
+        }
+        if ((v0 < 0) !== (v3 < 0)) {
+          const a = Math.abs(v0) / Math.max(0.0001, Math.abs(v0) + Math.abs(v3));
+          if (pointCount === 0) {
+            px0 = x * sx;
+            py0 = (y + a) * sy;
+          } else if (pointCount === 1) {
+            px1 = x * sx;
+            py1 = (y + a) * sy;
+          } else if (pointCount === 2) {
+            px2 = x * sx;
+            py2 = (y + a) * sy;
+          } else {
+            px3 = x * sx;
+            py3 = (y + a) * sy;
+          }
+          pointCount += 1;
+        }
+        if (pointCount === 2) {
+          pushContourSegment(px0, py0, px1, py1);
+        } else if (pointCount === 4) {
+          pushContourSegment(px0, py0, px1, py1);
+          pushContourSegment(px2, py2, px3, py3);
         }
       }
     }
-    return segments;
   }
 
-  function strokeSegments(ctx, segments, color, lineWidth, dash = null, dashOffset = 0) {
+  function strokeSegments(ctx, color, lineWidth, dash = null, dashOffset = 0) {
     ctx.save();
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -514,31 +585,58 @@
     ctx.strokeStyle = color;
     ctx.lineWidth = lineWidth;
     ctx.beginPath();
-    for (let i = 0; i < segments.length; i += 1) {
-      const a = segments[i][0];
-      const b = segments[i][1];
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
+    for (let i = 0; i < contourSegmentCount; i += 1) {
+      const offset = i * 4;
+      ctx.moveTo(contourSegments[offset], contourSegments[offset + 1]);
+      ctx.lineTo(contourSegments[offset + 2], contourSegments[offset + 3]);
     }
     ctx.stroke();
     ctx.restore();
   }
 
   function drawContours(ctx, t) {
-    const segments = collectContourSegments();
-    if (!segments.length) return;
-    strokeSegments(ctx, segments, "rgba(43, 39, 86, 0.1)", 2.5);
-    strokeSegments(ctx, segments, "rgba(244, 253, 255, 0.24)", 1.15);
-    strokeSegments(ctx, segments, "rgba(255, 255, 255, 0.08)", 0.55, [18, 28], -t * 18);
+    if (!contoursEnabled) return;
+    if (!Number.isFinite(contourRenderedTime) || Math.abs(contourRenderedTime - renderedTime) > 0.001) {
+      collectContourSegments();
+      contourRenderedTime = renderedTime;
+    }
+    if (!contourSegmentCount) return;
+    strokeSegments(ctx, "rgba(29, 35, 72, 0.22)", qualityScale < 0.7 ? 1.7 : 2);
+    strokeSegments(ctx, "rgba(246, 253, 255, 0.44)", qualityScale < 0.7 ? 0.82 : 1);
+    strokeSegments(ctx, "rgba(255, 190, 210, 0.16)", 0.45);
   }
 
-  function render(ctx, t, nextWidth = width, nextHeight = height) {
+  function setQuality(options = {}) {
+    const nextScale = clamp(Number(options.scale ?? options.quality ?? qualityScale), 0.42, 1);
+    const frameFps = clamp(Number(options.fps ?? options.frameFps ?? 60), 24, 60);
+    const frameSkip = clamp(Math.round(Number(options.frameSkip ?? 1)), 1, 5);
+    const nextFrameStep = (1 / frameFps) * frameSkip;
+    const nextContoursEnabled = options.contours !== false;
+    const scaleChanged = Math.abs(nextScale - qualityScale) > 0.01;
+    const timingChanged = Math.abs(nextFrameStep - frameStepSeconds) > 0.001;
+    const contourChanged = nextContoursEnabled !== contoursEnabled;
+    qualityScale = nextScale;
+    frameStepSeconds = nextFrameStep;
+    contoursEnabled = nextContoursEnabled;
+    if (scaleChanged) {
+      resize(width, height);
+    } else if (timingChanged || contourChanged) {
+      renderedTime = Number.NaN;
+      contourSegmentCount = 0;
+      contourRenderedTime = Number.NaN;
+    }
+  }
+
+  function render(ctx, t, nextWidth = width, nextHeight = height, options = null) {
+    if (options) {
+      setQuality(options);
+    }
     if (Math.abs(nextWidth - width) > 0.5 || Math.abs(nextHeight - height) > 0.5 || !imageData) {
       resize(nextWidth, nextHeight);
     }
-    ensureFrame(t);
+    const frameTime = ensureFrame(t);
     ctx.drawImage(fieldCanvas, 0, 0, width, height);
-    drawContours(ctx, t);
+    drawContours(ctx, frameTime);
   }
 
   function colorIndexAt(x, y, t) {
@@ -551,6 +649,7 @@
 
   window.PaopaoBackgroundEngine = {
     resize,
+    setQuality,
     render,
     colorIndexAt,
     mixAt,
