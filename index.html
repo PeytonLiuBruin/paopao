@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#8ebfcb" />
+    <title>泡泡补水</title>
+    <link rel="stylesheet" href="./styles.css?v=1.1.10" />
+  </head>
+  <body>
+    <main class="phone-shell" aria-label="泡泡补水游戏">
+      <canvas id="game" aria-label="游戏画面"></canvas>
+
+      <section class="hud" aria-label="游戏状态">
+        <span id="difficultyLevel" class="difficulty-level">Lv 1</span>
+        <div class="score-block water-block">
+          <div class="water-topline">
+            <span class="caption">水槽</span>
+            <strong id="waterValue" class="water-value">100%</strong>
+          </div>
+          <div id="heartMeter" class="heart-meter" aria-hidden="true">
+            <img class="heart-bubble" alt="" />
+            <img class="heart-bubble" alt="" />
+            <img class="heart-bubble" alt="" />
+            <img class="heart-bubble" alt="" />
+          </div>
+          <div class="water-meter" aria-hidden="true">
+            <span id="waterFill"></span>
+          </div>
+          <div id="comboChip" class="combo-chip" aria-live="polite"></div>
+        </div>
+
+        <div class="score-block right">
+          <span class="caption">分数</span>
+          <strong id="score">0</strong>
+          <span id="timeValue" class="time-pill" aria-label="存活时间">0:00</span>
+        </div>
+      </section>
+
+      <button id="clearSkill" class="clear-skill ready" type="button" aria-label="清屏技能">
+        <span>清屏</span>
+        <strong id="clearSkillValue">READY</strong>
+      </button>
+
+      <section id="curtain" class="curtain">
+        <div class="title-mark">泡泡补水</div>
+        <p class="start-copy">泡泡进入同色背景时戳破它，连击把水槽续满。</p>
+        <button id="startButton" class="primary-button" type="button">开始</button>
+        <div id="endStats" class="end-stats"></div>
+      </section>
+      <div id="startTransition" class="start-transition" aria-hidden="true"></div>
+      <div id="perfDebug" class="fps-counter" aria-hidden="true">FPS --</div>
+    </main>
+
+    <script src="./background-engine.js?v=1.1.10" defer></script>
+    <script src="./game.js?v=1.1.11" defer></script>
+  </body>
+</html>
