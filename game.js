@@ -3,7 +3,7 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false });
-  const buildVersion = "1.1.0";
+  const buildVersion = "1.1.1";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -228,7 +228,9 @@
     ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    ensureMirrorBackgroundBuffer();
+    if (window.PaopaoBackgroundEngine) {
+      window.PaopaoBackgroundEngine.resize(state.width, state.height);
+    }
   }
 
   function rand(min, max) {
@@ -793,6 +795,9 @@
   }
 
   function backgroundSignedAt(x, y, time = state.visualTime) {
+    if (window.PaopaoBackgroundEngine) {
+      return window.PaopaoBackgroundEngine.fieldAt(x, y, backgroundEngineTimeSeconds(time));
+    }
     const layout = backgroundLayoutAt();
     const axes = backgroundAxes(layout);
     const px = state.width > 0 ? x / state.width - 0.5 : 0;
@@ -803,12 +808,18 @@
   }
 
   function backgroundMixAt(x, y, time = state.visualTime) {
+    if (window.PaopaoBackgroundEngine) {
+      return window.PaopaoBackgroundEngine.mixAt(x, y, backgroundEngineTimeSeconds(time));
+    }
     const layout = backgroundLayoutAt();
     const softness = layout.width;
     return smoothstep(-softness, softness, backgroundSignedAt(x, y, time));
   }
 
   function backgroundColorIndexAt(x, y) {
+    if (window.PaopaoBackgroundEngine) {
+      return window.PaopaoBackgroundEngine.colorIndexAt(x, y, backgroundEngineTimeSeconds());
+    }
     return backgroundMixAt(x, y) >= 0.5 ? 1 : 0;
   }
 
@@ -4099,6 +4110,10 @@
   }
 
   function drawBackground() {
+    if (window.PaopaoBackgroundEngine) {
+      window.PaopaoBackgroundEngine.render(ctx, backgroundEngineTimeSeconds(), state.width, state.height);
+      return;
+    }
     const time = state.visualTime;
     const d = difficulty();
     const openAmount = state.openUntil > state.elapsed ? 0.16 : 0;
@@ -5222,6 +5237,13 @@
     flow.from = layout;
     flow.target = layout;
     Object.assign(flow, backgroundTimingForLevel(level));
+  }
+
+  function backgroundEngineTimeSeconds(time = state.visualTime) {
+    if (state.running || state.elapsed > 0) {
+      return Math.max(0, state.elapsed / 1000);
+    }
+    return Math.max(0, time / 1000);
   }
 
   function updateDebugPanel() {
