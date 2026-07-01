@@ -1,0 +1,181 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 22% 16%, rgba(255, 255, 255, 0.18), transparent 30%),
+    linear-gradient(135deg, #7f939c, #61747d);
+  font-family: "Arial Rounded MT Bold", "PingFang SC", "Microsoft YaHei UI", system-ui, sans-serif;
+}
+
+.mirror-shell {
+  position: relative;
+  width: min(100vw, 520px, calc(100vh * 0.64));
+  height: min(100vh, 920px);
+  overflow: hidden;
+  background: #83bac8;
+  touch-action: none;
+}
+
+@supports (height: 100dvh) {
+  .mirror-shell {
+    width: min(100vw, 520px, calc(100dvh * 0.64));
+    height: min(100dvh, 920px);
+  }
+}
+
+#mirrorCanvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.mirror-hud {
+  position: absolute;
+  z-index: 3;
+  top: calc(10px + env(safe-area-inset-top));
+  left: calc(10px + env(safe-area-inset-left));
+  right: calc(10px + env(safe-area-inset-right));
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 8px;
+  align-items: start;
+  pointer-events: none;
+}
+
+.readout {
+  min-width: 72px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(19, 45, 62, 0.26);
+  text-shadow: 0 1px 2px rgba(12, 31, 44, 0.35);
+}
+
+.readout.compact {
+  min-width: 58px;
+}
+
+.readout span {
+  display: block;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0;
+  opacity: 0.72;
+}
+
+.readout strong {
+  display: block;
+  margin-top: 1px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.tool-row {
+  justify-self: end;
+  display: inline-flex;
+  gap: 5px;
+  padding: 5px;
+  border-radius: 10px;
+  background: rgba(20, 44, 58, 0.22);
+  pointer-events: auto;
+}
+
+.tool-row button,
+.burst-button {
+  border: 0;
+  color: #173546;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(213, 233, 238, 0.9));
+  font: inherit;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.tool-row button {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.tool-row button.active {
+  color: #ffffff;
+  background: linear-gradient(180deg, #6dd7e5, #4c9fb2);
+}
+
+.volume-control {
+  grid-column: 1 / -1;
+  justify-self: end;
+  width: min(210px, 56vw);
+  pointer-events: auto;
+}
+
+.volume-control input {
+  width: 100%;
+  accent-color: #69d6e7;
+}
+
+.burst-button {
+  position: absolute;
+  z-index: 3;
+  left: calc(12px + env(safe-area-inset-left));
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  min-width: 74px;
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 999px;
+  box-shadow: 0 10px 28px rgba(16, 50, 75, 0.2);
+}
+
+.mirror-stats {
+  position: absolute;
+  z-index: 3;
+  right: calc(8px + env(safe-area-inset-right));
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  max-width: 68%;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(12, 38, 58, 0.22);
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+
+@media (max-width: 360px), (max-height: 640px) {
+  .mirror-hud {
+    gap: 6px;
+  }
+
+  .readout {
+    min-width: 58px;
+    padding: 5px 7px;
+  }
+
+  .readout strong {
+    font-size: 14px;
+  }
+
+  .tool-row button {
+    width: 30px;
+    height: 30px;
+  }
+}

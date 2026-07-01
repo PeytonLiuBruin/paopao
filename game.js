@@ -3,7 +3,7 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
-  const buildVersion = "1.1.10";
+  const buildVersion = "1.1.11";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -33,6 +33,11 @@
   const bubbleSpriteCols = 5;
   const targetFrameMs = 1000 / 60;
   const maxActiveBubbles = 12;
+  const spawnProtectionSeconds = 2.5;
+  const spawnProtectionIterations = 4;
+  const spawnProtectionStiffness = 0.68;
+  const spawnProtectionRestitution = 0.08;
+  const spawnProtectionFriction = 0.026;
   const maxParticles = 72;
   const maxRipples = 32;
   const maxBlasts = 4;
@@ -1940,6 +1945,7 @@
     const velocity = options.velocity ?? aimedVelocity(x, y, target, speed, isBleach ? 6 : kind === "normal" ? 12 : 26);
     const customHoldRequiredMs = Math.max(0, Math.round(options.holdRequiredMs ?? options.customHoldRequiredMs ?? 0));
     const customTapRequired = Math.max(0, Math.round(options.tapRequired ?? options.customTapRequired ?? 1));
+    const spawnProtectMass = spawnProtectionMassForRadius(radius);
     const bubble = {
       uid: ++state.bubbleCounter,
       x,
@@ -1955,6 +1961,8 @@
       skinPhase: rand(0, Math.PI * 2),
       radius,
       baseRadius: radius,
+      spawnProtectMass,
+      spawnProtectInvMass: 1 / spawnProtectMass,
       waterValue,
       missPenalty: waterProfile.missPenalty ?? 0,
       wrongPenalty: waterProfile.wrongPenalty ?? 0,
@@ -3983,6 +3991,105 @@
     bubble.vy += pushY * force;
   }
 
+  function spawnProtectionMassForRadius(radius) {
+    return Math.max(0.35, radius * radius * 0.00072);
+  }
+
+  function bubbleHasSpawnProtection(bubble) {
+    return bubble.age >= 0 && bubble.age <= spawnProtectionSeconds && !bubble.customPath;
+  }
+
+  function bubbleCanProtectSpawn(bubble) {
+    return bubble.age >= 0 && !bubble.customPath;
+  }
+
+  function resolveSpawnProtectionPair(a, b, dt) {
+    const aActive = bubbleHasSpawnProtection(a);
+    const bActive = bubbleHasSpawnProtection(b);
+    if ((!aActive && !bActive) || !bubbleCanProtectSpawn(a) || !bubbleCanProtectSpawn(b)) return;
+
+    let dx = b.x - a.x;
+    let dy = b.y - a.y;
+    let distance = Math.hypot(dx, dy);
+    let nx = 1;
+    let ny = 0;
+    if (distance > 0.001) {
+      nx = dx / distance;
+      ny = dy / distance;
+    } else {
+      const angle = (a.uid - b.uid) * 1.37;
+      nx = Math.cos(angle);
+      ny = Math.sin(angle);
+      distance = 0.01;
+      dx = nx * distance;
+      dy = ny * distance;
+    }
+
+    const radiusSum = a.baseRadius + b.baseRadius;
+    const streamPair = a.isStream || b.isStream;
+    const largePair = a.baseRadius >= 42 || b.baseRadius >= 42;
+    const restScale = streamPair ? 0.72 : largePair ? 0.86 : 0.82;
+    const minDistance = radiusSum * restScale;
+    if (distance >= minDistance) return;
+
+    const aInvMass = aActive ? a.spawnProtectInvMass : 0;
+    const bInvMass = bActive ? b.spawnProtectInvMass : 0;
+    const totalInvMass = aInvMass + bInvMass;
+    if (totalInvMass <= 0) return;
+
+    const overlap = minDistance - distance;
+    const pressure = overlap / Math.max(minDistance, 1);
+    const stiffness = clamp(0.44 + pressure * 1.6, 0.44, spawnProtectionStiffness);
+    const correction = (overlap * stiffness) / totalInvMass;
+    a.x -= nx * correction * aInvMass;
+    a.y -= ny * correction * aInvMass;
+    b.x += nx * correction * bInvMass;
+    b.y += ny * correction * bInvMass;
+
+    const rvx = b.vx - a.vx;
+    const rvy = b.vy - a.vy;
+    const normalVelocity = rvx * nx + rvy * ny;
+    if (normalVelocity < 0) {
+      const impulse = (-(1 + spawnProtectionRestitution) * normalVelocity) / totalInvMass;
+      a.vx -= nx * impulse * aInvMass;
+      a.vy -= ny * impulse * aInvMass;
+      b.vx += nx * impulse * bInvMass;
+      b.vy += ny * impulse * bInvMass;
+    }
+
+    const tx = -ny;
+    const ty = nx;
+    const tangentVelocity = rvx * tx + rvy * ty;
+    const tangentImpulse = (-tangentVelocity * spawnProtectionFriction) / totalInvMass;
+    a.vx -= tx * tangentImpulse * aInvMass;
+    a.vy -= ty * tangentImpulse * aInvMass;
+    b.vx += tx * tangentImpulse * bInvMass;
+    b.vy += ty * tangentImpulse * bInvMass;
+
+    if (dt > 0 && pressure > 0.08) {
+      const settle = Math.min(18, (overlap / dt) * 0.018);
+      a.vx -= nx * settle * aInvMass;
+      a.vy -= ny * settle * aInvMass;
+      b.vx += nx * settle * bInvMass;
+      b.vy += ny * settle * bInvMass;
+    }
+  }
+
+  function solveSpawnProtection(dt) {
+    const activeCount = state.bubbles.reduce((count, bubble) => count + (bubbleHasSpawnProtection(bubble) ? 1 : 0), 0);
+    if (activeCount <= 0) return;
+
+    for (let iteration = 0; iteration < spawnProtectionIterations; iteration += 1) {
+      for (let i = 0; i < state.bubbles.length; i += 1) {
+        const a = state.bubbles[i];
+        if (!bubbleCanProtectSpawn(a)) continue;
+        for (let j = i + 1; j < state.bubbles.length; j += 1) {
+          resolveSpawnProtectionPair(a, state.bubbles[j], dt);
+        }
+      }
+    }
+  }
+
   function tryPopAt(x, y, isTap, pointerId = null) {
     for (let i = state.bubbles.length - 1; i >= 0; i -= 1) {
       const bubble = state.bubbles[i];
@@ -4192,6 +4299,8 @@
         state.bubbles.splice(i, 1);
       }
     }
+
+    solveSpawnProtection(dt);
 
     for (let i = state.blasts.length - 1; i >= 0; i -= 1) {
       const blast = state.blasts[i];
